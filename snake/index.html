@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Snake Wars</title>
+  <link rel="stylesheet" href="/snake/style.css" />
+</head>
+<body>
+
+  <!-- ── Hero selection ─────────────────────────────────────────────────── -->
+  <div id="selection">
+    <div id="sel-panel">
+      <div class="logo">🐍 Snake Wars</div>
+      <p class="sub">Büyü, yakala, yut!</p>
+
+      <label class="field-label">Oyuncu Adı</label>
+      <input id="nick" type="text" maxlength="16" placeholder="Takma adını gir…" autocomplete="off" />
+
+      <label class="field-label">Karakterini Seç</label>
+      <div id="hero-grid">
+        <div class="hero-card" data-animal="snake"  data-color="#2ed573"><span class="he">🐍</span><span class="hn">Yılan</span></div>
+        <div class="hero-card" data-animal="fox"    data-color="#ff9f43"><span class="he">🦊</span><span class="hn">Tilki</span></div>
+        <div class="hero-card" data-animal="dragon" data-color="#a29bfe"><span class="he">🐉</span><span class="hn">Ejder</span></div>
+        <div class="hero-card" data-animal="lion"   data-color="#ffd700"><span class="he">🦁</span><span class="hn">Aslan</span></div>
+        <div class="hero-card" data-animal="wolf"   data-color="#b2bec3"><span class="he">🐺</span><span class="hn">Kurt</span></div>
+        <div class="hero-card" data-animal="bear"   data-color="#c8a07a"><span class="he">🐻</span><span class="hn">Ayı</span></div>
+      </div>
+
+      <button id="play-btn" disabled>▶ Oyuna Gir</button>
+
+      <p class="hint">Hareketi: fare imleci ile yönlendir</p>
+    </div>
+  </div>
+
+  <!-- ── Game canvas ────────────────────────────────────────────────────── -->
+  <div id="game" class="hidden">
+    <canvas id="cvs"></canvas>
+
+    <!-- Dead overlay -->
+    <div id="dead" class="hidden">
+      <div id="dead-box">
+        <div class="dead-icon">💀</div>
+        <h2>Öldün!</h2>
+        <p>Skor: <strong id="dead-score">0</strong></p>
+        <button id="respawn-btn">🔄 Yeniden Başla</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Chat overlay -->
+  <div id="chat-wrap">
+    <div id="chat-msgs"></div>
+    <div id="chat-input-wrap" class="hidden">
+      <div id="chat-hint">💬 Mesaj yaz — <kbd>Enter</kbd> gönder, <kbd>Esc</kbd> kapat</div>
+      <input id="chat-input" type="text" maxlength="120" placeholder="Mesajını yaz…" autocomplete="off" />
+    </div>
+  </div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="/snake/game.js"></script>
+</body>
+</html>

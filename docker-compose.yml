@@ -1,0 +1,14 @@
+version: '3.8'
+
+services:
+  territory-war:
+    build: .
+    container_name: territory-war
+    ports:
+      - "8099:3000"
+    volumes:
+      - ./data:/app/data      # state persistence across restarts
+    restart: unless-stopped
+    environment:
+      - PORT=3000
+      - NODE_ENV=production

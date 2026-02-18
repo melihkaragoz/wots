@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Territory War</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div id="app">
+
+    <header>
+      <h1>⚔️ Territory War</h1>
+      <div id="conn" class="badge badge-connecting">Bağlanıyor…</div>
+    </header>
+
+    <!-- Score bar -->
+    <div id="scoreboard">
+      <div class="score-side p1">
+        <span class="dot p1dot"></span>
+        <span class="name">Oyuncu 1</span>
+        <span class="pct" id="pct1">0%</span>
+      </div>
+      <div id="bar-wrap">
+        <div id="bar1"></div>
+        <div id="bar2"></div>
+      </div>
+      <div class="score-side p2">
+        <span class="pct" id="pct2">0%</span>
+        <span class="name">Oyuncu 2</span>
+        <span class="dot p2dot"></span>
+      </div>
+    </div>
+
+    <!-- Canvas wrapper -->
+    <div id="cvs-wrap">
+      <canvas id="cvs"></canvas>
+      <!-- Overlay: waiting / spectator / game-over -->
+      <div id="overlay">
+        <div id="overlay-box">
+          <p id="overlay-msg"></p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Footer -->
+    <footer>
+      <span id="role-info">—</span>
+      <button id="reset-btn">🔄 Oyunu Sıfırla</button>
+      <span id="cell-counts"></span>
+    </footer>
+
+  </div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="game.js"></script>
+</body>
+</html>
