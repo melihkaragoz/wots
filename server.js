@@ -4,220 +4,25 @@ const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
 const path = require('path');
-const fs = require('fs');
 
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server, { pingTimeout: 60000 });
 
-app.use(express.static(path.join(__dirname, 'public')));
-
-// ── Constants ──────────────────────────────────────────────────────────────
-const COLS = 100;
-const ROWS = 60;
-const CELL = 10;          // pixels per cell
-const W = COLS * CELL;    // 1000px
-const H = ROWS * CELL;    // 600px
-const SPEED = 3;          // px per tick
-const P_RADIUS = 12;      // player circle radius
-const PAINT_R = 2.3;      // paint radius in cells
-
-// ── Persistence ────────────────────────────────────────────────────────────
-const DATA_DIR = path.join(__dirname, 'data');
-const STATE_FILE = path.join(DATA_DIR, 'state.json');
-if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
-
-// ── Game state ─────────────────────────────────────────────────────────────
-const gs = {
-  territory: new Uint8Array(COLS * ROWS),  // 0=neutral 1=P1 2=P2
-  scores: { 1: 0, 2: 0 },
-  players: {},                             // socketId → player obj
-};
-
-// ── Load persisted state ───────────────────────────────────────────────────
-try {
-  if (fs.existsSync(STATE_FILE)) {
-    const saved = JSON.parse(fs.readFileSync(STATE_FILE, 'utf8'));
-    gs.territory = new Uint8Array(saved.territory);
-    gs.scores = saved.scores;
-    console.log('Loaded saved state.');
-  }
-} catch (e) {
-  console.warn('Could not load saved state:', e.message);
-}
-
-function persistState() {
-  try {
-    fs.writeFileSync(STATE_FILE, JSON.stringify({
-      territory: Array.from(gs.territory),
-      scores: gs.scores
-    }));
-  } catch (e) {
-    console.warn('Save failed:', e.message);
-  }
-}
-setInterval(persistState, 10_000);
-
-// ── Helpers ────────────────────────────────────────────────────────────────
-const COLORS = { 1: '#ff4757', 2: '#1e90ff' };
-
-function startPos(num) {
-  return num === 1
-    ? { x: W * 0.25, y: H / 2 }
-    : { x: W * 0.75, y: H / 2 };
-}
-
-function calcScores() {
-  let s1 = 0, s2 = 0;
-  for (const v of gs.territory) {
-    if (v === 1) s1++;
-    else if (v === 2) s2++;
-  }
-  gs.scores = { 1: s1, 2: s2 };
-}
-
-function paint(x, y, pNum) {
-  const cx = x / CELL;
-  const cy = y / CELL;
-  const r = Math.ceil(PAINT_R) + 1;
-  let changed = false;
-  for (let row = Math.max(0, Math.floor(cy - r)); row <= Math.min(ROWS - 1, Math.ceil(cy + r)); row++) {
-    for (let col = Math.max(0, Math.floor(cx - r)); col <= Math.min(COLS - 1, Math.ceil(cx + r)); col++) {
-      const d = Math.sqrt((col + 0.5 - cx) ** 2 + (row + 0.5 - cy) ** 2);
-      if (d <= PAINT_R) {
-        const idx = row * COLS + col;
-        if (gs.territory[idx] !== pNum) {
-          gs.territory[idx] = pNum;
-          changed = true;
-        }
-      }
-    }
-  }
-  return changed;
-}
-
-function activePlayers() {
-  return Object.values(gs.players);
-}
-
-function buildPData() {
-  const d = {};
-  for (const p of activePlayers()) {
-    d[p.num] = { x: p.x, y: p.y, color: p.color };
-  }
-  return d;
-}
-
-// ── Game loop ──────────────────────────────────────────────────────────────
-let dirty = false;
-
-setInterval(() => {
-  let moved = false;
-  for (const p of activePlayers()) {
-    const dx = p.tx - p.x;
-    const dy = p.ty - p.y;
-    const dist = Math.sqrt(dx * dx + dy * dy);
-    if (dist > 0.5) {
-      const spd = Math.min(SPEED, dist);
-      p.x += (dx / dist) * spd;
-      p.y += (dy / dist) * spd;
-      p.x = Math.max(P_RADIUS, Math.min(W - P_RADIUS, p.x));
-      p.y = Math.max(P_RADIUS, Math.min(H - P_RADIUS, p.y));
-      if (paint(p.x, p.y, p.num)) dirty = true;
-      moved = true;
-    }
-  }
-
-  if (dirty) calcScores();
-
-  io.emit('tick', {
-    p: buildPData(),
-    s: gs.scores,
-    t: dirty ? Buffer.from(gs.territory) : null,
-  });
-
-  dirty = false;
-}, 1000 / 30);
-
-// ── Socket handling ────────────────────────────────────────────────────────
-io.on('connection', (socket) => {
-  const taken = activePlayers().map(p => p.num);
-
-  if (taken.length >= 2) {
-    socket.emit('init', {
-      role: 'spectator',
-      territory: Buffer.from(gs.territory),
-      scores: gs.scores,
-      players: buildPData(),
-      totalCells: COLS * ROWS,
-    });
-
-    socket.on('reset', handleReset);
-    return;
-  }
-
-  const num = [1, 2].find(n => !taken.includes(n));
-  const { x, y } = startPos(num);
-
-  gs.players[socket.id] = { socketId: socket.id, num, color: COLORS[num], x, y, tx: x, ty: y };
-
-  paint(x, y, num);
-  calcScores();
-  dirty = true;
-
-  socket.emit('init', {
-    role: 'player',
-    num,
-    color: COLORS[num],
-    territory: Buffer.from(gs.territory),
-    scores: gs.scores,
-    players: buildPData(),
-    totalCells: COLS * ROWS,
-  });
-
-  socket.broadcast.emit('pjoin', { num, color: COLORS[num] });
-
-  socket.on('m', ({ x, y }) => {
-    const p = gs.players[socket.id];
-    if (p) {
-      p.tx = Math.max(0, Math.min(W, x));
-      p.ty = Math.max(0, Math.min(H, y));
-    }
-  });
-
-  socket.on('reset', handleReset);
-
-  socket.on('disconnect', () => {
-    if (!gs.players[socket.id]) return;
-    const { num } = gs.players[socket.id];
-    delete gs.players[socket.id];
-    socket.broadcast.emit('pleave', { num });
-    persistState();
-    console.log(`P${num} disconnected.`);
-  });
-});
-
-function handleReset() {
-  gs.territory.fill(0);
-  for (const p of activePlayers()) paint(p.x, p.y, p.num);
-  calcScores();
-  dirty = true;
-  io.emit('reset', { territory: Buffer.from(gs.territory), scores: gs.scores });
-  persistState();
-}
+// Root → Snake Wars
+app.get('/', (req, res) => res.redirect('/snake'));
+app.get('/snake', (req, res) => res.sendFile(path.join(__dirname, 'snake', 'index.html')));
+app.use('/snake', express.static(path.join(__dirname, 'snake')));
 
 // ══════════════════════════════════════════════════════════════════════════
 // SNAKE WARS
 // ══════════════════════════════════════════════════════════════════════════
 
-app.get('/snake', (req, res) => res.sendFile(path.join(__dirname, 'snake', 'index.html')));
-app.use('/snake', express.static(path.join(__dirname, 'snake')));
-
 const SW_W = 5000, SW_H = 5000;
 const SW_SPEED = 6;
 const SW_NPC = 8;
 const SW_FRUITS = 200;
-const SW_MAX_TRAIL = 100000; // effectively unlimited
+const SW_MAX_TRAIL = 100000;
 const SW_SAMPLE = 3;
 
 const SW_ANIMALS = [
@@ -282,9 +87,9 @@ function swMove(s) {
   let nx = s.x + Math.cos(s.dir) * spd;
   let ny = s.y + Math.sin(s.dir) * spd;
   const M = 20;
-  if (nx < M)        { nx = M;        s.dir = Math.PI - s.dir; }
+  if (nx < M)             { nx = M;        s.dir = Math.PI - s.dir; }
   else if (nx > SW_W - M) { nx = SW_W - M; s.dir = Math.PI - s.dir; }
-  if (ny < M)        { ny = M;        s.dir = -s.dir; }
+  if (ny < M)             { ny = M;        s.dir = -s.dir; }
   else if (ny > SW_H - M) { ny = SW_H - M; s.dir = -s.dir; }
   s.x = nx; s.y = ny;
   s.trail.push({ x: nx, y: ny });
@@ -362,12 +167,11 @@ function swNpcAI(s) {
   s.npcTimer = 15 + Math.floor(Math.random() * 45);
 }
 
-const ATTRACT_RANGE = 120;  // px — fruits start moving toward snake
-const ATTRACT_EAT   = 28;   // px — fruit gets consumed
+const ATTRACT_RANGE = 120;
+const ATTRACT_EAT   = 28;
 
 function spawnSoulOrb(s) {
   const id = 'soul' + swIdx++;
-  // Size of orb scales with snake length (capped)
   const r = Math.max(14, Math.min(30, 14 + s.tLen / 40));
   sw.fruits[id] = {
     id, x: s.x, y: s.y,
@@ -375,7 +179,7 @@ function spawnSoulOrb(s) {
     value: 300,
     radius: r,
     soul: true,
-    timer: 1200, // 40 seconds before disappearing
+    timer: 1200,
   };
 }
 
@@ -387,9 +191,9 @@ function swAttractAndEat() {
       const dist = Math.hypot(dx, dy);
       if (dist < ATTRACT_EAT) {
         s.growing += f.value; s.score += f.value;
-        delete sw.fruits[fid]; swFruit();
+        delete sw.fruits[fid];
+        if (!f.soul) swFruit();
       } else if (dist < ATTRACT_RANGE) {
-        // Accelerate as it gets closer
         const speed = 3 + 9 * (1 - dist / ATTRACT_RANGE);
         f.x += (dx / dist) * speed;
         f.y += (dy / dist) * speed;
@@ -401,14 +205,11 @@ function swAttractAndEat() {
 function swCollide() {
   const alive = Object.values(sw.snakes).filter(s => s.alive);
   for (const s1 of alive) {
-    if (s1.spawnTimer > 0) continue; // spawn grace — immune
+    if (s1.spawnTimer > 0) continue;
     for (const s2 of alive) {
       if (s1 === s2 || !s1.alive || !s2.alive) continue;
 
-      // ── Head-to-head ──────────────────────────────────────────────────
-      // Larger wins; equal size → both die.
-      // Each direction is handled in its own iteration, so we only act
-      // when s1 is the winner (s1 > s2) or equal (kill both immediately).
+      // Head-to-head: larger wins; equal → both die
       if (Math.hypot(s1.x - s2.x, s1.y - s2.y) < 20) {
         if (s1.tLen > s2.tLen) {
           s2.alive = false; spawnSoulOrb(s2);
@@ -417,11 +218,10 @@ function swCollide() {
           s1.alive = false; spawnSoulOrb(s1);
           s2.alive = false; spawnSoulOrb(s2);
         }
-        // s1 < s2: the reversed iteration (s1=s2, s2=s1) will handle it.
         continue;
       }
 
-      // ── A head → B body: A dies, no size check ────────────────────────
+      // A head → B body: A dies, no size check
       const body = s2.trail;
       const tailSkip = Math.min(15, Math.floor(body.length * 0.1));
       for (let k = tailSkip; k < body.length - 12 && s1.alive; k++) {
@@ -467,7 +267,6 @@ const BOMB_DAMAGE = 300;
 function swCheckBombs() {
   for (const [bid, bomb] of Object.entries(sw.bombs)) {
     if (--bomb.timer > 0) continue;
-    // Fuse expired — AoE explosion
     const hits = [];
     for (const s of Object.values(sw.snakes)) {
       if (!s.alive || s.id === bomb.ownerId) continue;
@@ -491,7 +290,6 @@ let swTick = 0;
 
 setInterval(() => {
   swTick++;
-  // Expire soul orbs
   for (const [fid, f] of Object.entries(sw.fruits)) {
     if (f.soul && --f.timer <= 0) delete sw.fruits[fid];
   }
@@ -508,7 +306,7 @@ setInterval(() => {
     }
     if (s.spawnTimer > 0) s.spawnTimer--;
     if (s.isNPC) swNpcAI(s);
-    // Boost drain: 1 pt per 6 ticks = 5 pt/sec
+    // Boost drain: 1 pt per 6 ticks
     if (s.boosting && swTick % 6 === 0) {
       if (s.tLen <= 15) {
         s.boosting = false;
@@ -532,13 +330,11 @@ setInterval(() => {
 }, 1000 / 30);
 
 swIo.on('connection', (socket) => {
-  let mySwId = null;
-
   socket.on('join', ({ name, animal }) => {
     const id = 'p' + socket.id.slice(0, 8);
     sw.snakes[id] = swMake(id, (name || 'Oyuncu').slice(0, 16), animal,
       300 + Math.random() * (SW_W - 600), 300 + Math.random() * (SW_H - 600), 20, false);
-    sw.players[socket.id] = id; mySwId = id;
+    sw.players[socket.id] = id;
     socket.emit('joined', { id, mapW: SW_W, mapH: SW_H });
   });
 
@@ -549,9 +345,7 @@ swIo.on('connection', (socket) => {
 
   socket.on('boost', ({ on }) => {
     const id = sw.players[socket.id];
-    if (id && sw.snakes[id] && sw.snakes[id].alive) {
-      sw.snakes[id].boosting = !!on;
-    }
+    if (id && sw.snakes[id] && sw.snakes[id].alive) sw.snakes[id].boosting = !!on;
   });
 
   socket.on('respawn', () => {
@@ -570,7 +364,7 @@ swIo.on('connection', (socket) => {
     if (!s.alive || s.tLen < 110) return;
     s.tLen -= 100;
     if (s.trail.length > s.tLen) s.trail = s.trail.slice(s.trail.length - s.tLen);
-    const BOMB_SPEED = 22; // px/tick
+    const BOMB_SPEED = 22;
     const dist = Math.max(350, Math.min(1, power) * 2200);
     const timer = Math.round(dist / BOMB_SPEED);
     const bid = 'b' + swIdx++;
@@ -608,6 +402,5 @@ swIo.on('connection', (socket) => {
 // ── Start ──────────────────────────────────────────────────────────────────
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, '0.0.0.0', () => {
-  console.log(`Territory War → http://0.0.0.0:${PORT}`);
-  console.log(`Snake Wars    → http://0.0.0.0:${PORT}/snake`);
+  console.log(`Snake Wars → http://0.0.0.0:${PORT}`);
 });
