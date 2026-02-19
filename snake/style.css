@@ -1,5 +1,202 @@
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
+/* ── Screens ────────────────────────────────────────────────────────────── */
+.screen {
+  position: fixed; inset: 0;
+  display: flex; align-items: center; justify-content: center;
+  background: radial-gradient(ellipse at 50% 30%, #0d1540 0%, #060614 70%);
+  overflow-y: auto;
+  z-index: 10;
+}
+.screen.hidden { display: none; }
+.screen-inner {
+  width: min(560px, 95vw);
+  padding: 32px 24px;
+}
+.screen-inner.center { text-align: center; }
+
+/* ── Buttons ────────────────────────────────────────────────────────────── */
+.btn-primary {
+  background: linear-gradient(135deg, #2ed573, #1a8a4a);
+  border: none; border-radius: 10px;
+  color: #000; font-weight: 700; font-family: inherit;
+  padding: 10px 22px; cursor: pointer; font-size: .9rem;
+  transition: opacity .15s, transform .1s;
+}
+.btn-primary:hover { opacity: .88; transform: translateY(-1px); }
+.btn-primary:disabled { opacity: .3; cursor: not-allowed; background: #333; color: #666; }
+.btn-primary.btn-lg { width: 100%; padding: 14px; font-size: 1rem; margin-top: 8px; }
+
+.btn-ghost {
+  background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.12);
+  border-radius: 10px; color: #e0e0ff; font-family: inherit;
+  padding: 9px 18px; cursor: pointer; font-size: .9rem;
+  transition: background .15s;
+}
+.btn-ghost:hover { background: rgba(255,255,255,.12); }
+.btn-sm { padding: 6px 12px; font-size: .8rem; }
+
+/* ── Rooms list ─────────────────────────────────────────────────────────── */
+.rooms-toolbar {
+  display: flex; gap: 10px; margin-bottom: 16px;
+}
+.rooms-list {
+  display: flex; flex-direction: column; gap: 8px;
+  max-height: 55vh; overflow-y: auto;
+}
+.rooms-empty { color: #555; text-align: center; padding: 40px 0; font-size: .9rem; }
+.room-card {
+  background: rgba(15,15,40,.95); border: 1px solid #1e1e4a;
+  border-radius: 12px; padding: 14px 18px;
+  display: flex; align-items: center; gap: 12px; cursor: pointer;
+  transition: border-color .15s, background .15s;
+}
+.room-card:hover { border-color: #4a4a9a; background: rgba(20,20,55,.95); }
+.room-card .room-name { flex: 1; font-weight: 600; }
+.room-card .room-info { font-size: .78rem; color: #888; }
+.room-card .cap-badge { background: rgba(46,213,115,.15); color: #2ed573;
+  border-radius: 6px; padding: 2px 8px; font-size: .8rem; font-weight: 700; }
+
+/* ── Modal ──────────────────────────────────────────────────────────────── */
+.modal-overlay {
+  position: fixed; inset: 0; background: rgba(0,0,0,.7);
+  display: flex; align-items: center; justify-content: center; z-index: 50;
+  backdrop-filter: blur(4px);
+}
+.modal-overlay.hidden { display: none; }
+.modal {
+  background: #0f0f2a; border: 1px solid #2a2a5a;
+  border-radius: 16px; padding: 28px 32px; width: min(420px, 92vw);
+  box-shadow: 0 0 60px rgba(108,92,231,.15);
+}
+.modal h2 { font-size: 1.1rem; margin-bottom: 16px; color: #a29bfe; }
+.modal label { display: block; font-size: .75rem; color: #888;
+  text-transform: uppercase; letter-spacing: .05em; margin: 12px 0 4px; }
+.modal input[type=text],
+.modal input[type=password],
+.modal input[type=number],
+.modal input { width: 100%; background: #0a0a22; border: 1px solid #1e1e4a;
+  border-radius: 8px; padding: 9px 12px; color: #e0e0ff; font-family: inherit;
+  font-size: .9rem; outline: none; }
+.modal input:focus { border-color: #4a4a9a; }
+.row-check { display: flex; align-items: center; gap: 8px; margin-top: 14px; }
+.row-check label { margin: 0; font-size: .85rem; color: #aaa;
+  text-transform: none; letter-spacing: 0; }
+.modal-btns { display: flex; gap: 10px; margin-top: 20px; justify-content: flex-end; }
+
+/* ── Lobby ──────────────────────────────────────────────────────────────── */
+.lobby-header {
+  display: flex; align-items: center; gap: 12px; margin-bottom: 20px;
+}
+.lobby-header h2 { flex: 1; font-size: 1.1rem; }
+.cap-badge { background: rgba(46,213,115,.15); color: #2ed573;
+  border-radius: 6px; padding: 3px 10px; font-size: .8rem; font-weight: 700; }
+
+.hero-section { margin-bottom: 16px; }
+.nick-input {
+  width: 100%; background: #0a0a22; border: 1px solid #1e1e4a;
+  border-radius: 10px; padding: 10px 14px; color: #e0e0ff;
+  font-size: 1rem; font-family: inherit; outline: none;
+  margin-bottom: 12px;
+}
+.nick-input:focus { border-color: #4a4a9a; }
+.hero-cards { display: grid; grid-template-columns: repeat(3,1fr); gap: 8px; }
+.hero-card {
+  background: #0c0c28; border: 2px solid #1e1e4a; border-radius: 12px;
+  padding: 14px 6px 10px; cursor: pointer; text-align: center; font-size: .85rem;
+  transition: transform .15s, border-color .15s, box-shadow .15s;
+}
+.hero-card:hover { border-color: #3a3a88; transform: translateY(-2px); }
+.hero-card.selected {
+  border-color: var(--sel-color, #2ed573);
+  box-shadow: 0 0 18px color-mix(in srgb, var(--sel-color,#2ed573) 35%, transparent);
+  transform: translateY(-2px);
+}
+
+.lobby-players {
+  display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; min-height: 42px;
+}
+.lobby-player {
+  background: rgba(15,15,40,.9); border: 1px solid #1e1e4a; border-radius: 8px;
+  padding: 6px 14px; font-size: .85rem; display: flex; align-items: center; gap: 6px;
+}
+.lobby-player.ready { border-color: #2ed573; }
+.lobby-player .ready-dot { width: 8px; height: 8px; border-radius: 50%;
+  background: #555; }
+.lobby-player.ready .ready-dot { background: #2ed573; }
+
+.lobby-footer { text-align: center; }
+.lobby-hint { color: #666; font-size: .82rem; margin-bottom: 10px; }
+
+/* ── Countdown ──────────────────────────────────────────────────────────── */
+.countdown-number {
+  font-size: 8rem; font-weight: 900; color: #2ed573;
+  text-shadow: 0 0 80px rgba(46,213,115,.5);
+  animation: countPulse .9s ease infinite alternate;
+}
+@keyframes countPulse {
+  from { transform: scale(1); }
+  to   { transform: scale(1.08); }
+}
+
+/* ── Match end ──────────────────────────────────────────────────────────── */
+.leaderboard { display: flex; flex-direction: column; gap: 6px; margin-top: 16px; }
+.lb-row {
+  background: rgba(15,15,40,.9); border: 1px solid #1e1e4a; border-radius: 10px;
+  padding: 10px 16px; display: flex; align-items: center; gap: 12px;
+}
+.lb-row.me { border-color: #ffd700; }
+.lb-rank { font-size: 1.2rem; font-weight: 900; width: 28px; text-align: center; }
+.lb-name { flex: 1; font-size: .95rem; }
+.lb-score { color: #ffd700; font-weight: 700; }
+
+.rewards-box {
+  margin-top: 16px; display: flex; flex-direction: column; gap: 6px;
+}
+.reward-row {
+  background: rgba(46,213,115,.08); border: 1px solid rgba(46,213,115,.2);
+  border-radius: 8px; padding: 8px 14px; font-size: .85rem; color: #2ed573;
+}
+
+/* ── Lobby: me highlight & ready-active button ──────────────────────────── */
+.lobby-player.lobby-player-me {
+  border-color: #a29bfe;
+  background: rgba(108,92,231,0.1);
+}
+.btn-ready-active {
+  background: linear-gradient(135deg, #ff4757, #c0392b) !important;
+  color: #fff !important;
+}
+
+/* ── Match end: me row ───────────────────────────────────────────────────── */
+.lb-row.lb-row-me {
+  border-color: #ffd700;
+  background: rgba(255,215,0,0.05);
+}
+
+/* ── KB button ──────────────────────────────────────────────────────────── */
+#kb-btn {
+  position: fixed; top: 12px; right: 12px; z-index: 15;
+  background: rgba(10,10,28,.8); border: 1px solid #333;
+  border-radius: 8px; color: #fff; padding: 6px 10px; cursor: pointer;
+  font-size: .85rem;
+}
+
+/* ── KB list ────────────────────────────────────────────────────────────── */
+.kb-row {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 8px 0; border-bottom: 1px solid #1a1a3a;
+}
+.kb-row:last-child { border-bottom: none; }
+.kb-label { font-size: .85rem; color: #ccc; }
+.kb-key {
+  background: #0a0a22; border: 1px solid #333; border-radius: 6px;
+  padding: 4px 12px; font-size: .8rem; color: #a29bfe; cursor: pointer;
+  min-width: 80px; text-align: center; transition: border-color .15s;
+}
+.kb-key.listening { border-color: #ffd700; color: #ffd700; animation: kbBlink .5s infinite; }
+@keyframes kbBlink { 0%,100%{opacity:1} 50%{opacity:.4} }
+
 :root {
   --bg: #06061a;
   --panel: #0f0f2a;

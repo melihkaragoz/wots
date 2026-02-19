@@ -1,10 +1,38 @@
 services:
-  territory-war:
+  app:
     build: .
-    container_name: territory-war
+    container_name: snake-wars
     ports:
-      - "8099:3000"
-    restart: unless-stopped
+      - "8099:8099"
     environment:
-      - PORT=3000
+      - PORT=8099
       - NODE_ENV=production
+      - DATABASE_URL=postgresql://snakewars:snakewars123@postgres:5432/snakewars
+      - JWT_SECRET=${JWT_SECRET:-supersecret_change_in_production_min32chars}
+      - ADMIN_USER=${ADMIN_USER:-admin}
+      - ADMIN_PASS=${ADMIN_PASS:-admin123}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: snake-wars-db
+    environment:
+      POSTGRES_DB: snakewars
+      POSTGRES_USER: snakewars
+      POSTGRES_PASSWORD: snakewars123
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./db/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql
+      - ./db/seeds.sql:/docker-entrypoint-initdb.d/02-seeds.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U snakewars -d snakewars"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+volumes:
+  postgres_data:

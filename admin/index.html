@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Snake Wars – Admin</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:system-ui,sans-serif;background:#0d0d1a;color:#e0e0f0;min-height:100vh}
+header{background:#1a1a2e;padding:16px 24px;display:flex;align-items:center;gap:16px;border-bottom:1px solid #333}
+header h1{font-size:1.2rem;color:#a29bfe}
+nav{display:flex;gap:8px;margin-left:auto}
+nav button{background:#2d2d4e;border:none;color:#e0e0f0;padding:8px 16px;border-radius:6px;cursor:pointer;font-size:.85rem}
+nav button.active{background:#6c5ce7}
+.page{display:none;padding:24px;max-width:1100px;margin:0 auto}
+.page.active{display:block}
+h2{font-size:1rem;color:#a29bfe;margin-bottom:16px;text-transform:uppercase;letter-spacing:.05em}
+.card{background:#1a1a2e;border-radius:10px;padding:20px;margin-bottom:16px}
+table{width:100%;border-collapse:collapse;font-size:.85rem}
+th{text-align:left;padding:8px 12px;color:#a29bfe;border-bottom:1px solid #333;font-weight:600}
+td{padding:8px 12px;border-bottom:1px solid #1e1e3a}
+tr:hover td{background:#1e1e3a}
+input,select,textarea{background:#0d0d1a;border:1px solid #333;color:#e0e0f0;padding:8px 10px;border-radius:6px;font-size:.85rem;width:100%}
+.btn{padding:8px 16px;border:none;border-radius:6px;cursor:pointer;font-size:.85rem}
+.btn-primary{background:#6c5ce7;color:#fff}
+.btn-sm{padding:4px 10px;font-size:.8rem;background:#2d2d4e;color:#e0e0f0;border:none;border-radius:4px;cursor:pointer}
+.btn-danger{background:#e84040;color:#fff}
+.btn-success{background:#2ed573;color:#000}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.tag{display:inline-block;padding:2px 8px;border-radius:4px;font-size:.75rem}
+.tag-common{background:#333;color:#ccc}
+.tag-rare{background:#1e4a8a;color:#6af}
+.tag-epic{background:#3a1a6e;color:#a29bfe}
+.tag-legendary{background:#5a3a00;color:#ffd700}
+label{font-size:.8rem;color:#888;display:block;margin-bottom:4px;margin-top:10px}
+.msg{padding:8px 12px;border-radius:6px;margin-bottom:12px;font-size:.85rem;display:none}
+.msg.ok{background:#1a4a2e;color:#2ed573;display:block}
+.msg.err{background:#4a1a1a;color:#e84040;display:block}
+</style>
+</head>
+<body>
+<header>
+  <h1>🐍 Snake Wars Admin</h1>
+  <nav>
+    <button class="active" onclick="showPage('settings')">⚙️ Ayarlar</button>
+    <button onclick="showPage('shop')">🛒 Shop</button>
+    <button onclick="showPage('rewards')">🎁 Ödül Kuralları</button>
+    <button onclick="showPage('users')">👥 Kullanıcılar</button>
+  </nav>
+</header>
+
+<!-- SETTINGS -->
+<div id="page-settings" class="page active">
+  <h2>Oyun Ayarları</h2>
+  <div id="msg-settings" class="msg"></div>
+  <div class="card">
+    <table id="settings-table">
+      <thead><tr><th>Anahtar</th><th>Değer</th><th></th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
+  <div class="card">
+    <h2 style="margin-bottom:12px">Yeni Ayar Ekle</h2>
+    <div class="grid2">
+      <div><label>Anahtar</label><input id="new-key" placeholder="ornek_ayar"></div>
+      <div><label>Değer</label><input id="new-val" placeholder="42" type="number"></div>
+    </div>
+    <button class="btn btn-primary" style="margin-top:12px" onclick="addSetting()">Ekle</button>
+  </div>
+</div>
+
+<!-- SHOP -->
+<div id="page-shop" class="page">
+  <h2>Shop Ürünleri</h2>
+  <div id="msg-shop" class="msg"></div>
+  <div class="card" style="overflow-x:auto">
+    <table id="shop-table">
+      <thead><tr><th>ID</th><th>İsim</th><th>Kategori</th><th>Tip</th><th>Nadirlik</th><th>Fiyat</th><th>Durum</th><th></th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
+  <div class="card">
+    <h2 style="margin-bottom:12px">Yeni Ürün</h2>
+    <div class="grid2">
+      <div><label>ID</label><input id="si-id" placeholder="skin_neon_purple"></div>
+      <div><label>İsim</label><input id="si-name" placeholder="Neon Mor"></div>
+      <div><label>Açıklama</label><input id="si-desc" placeholder="Mor neon yılan"></div>
+      <div><label>Kategori</label>
+        <select id="si-cat"><option>appearance</option><option>upgrade</option><option>active</option><option>consumable</option></select>
+      </div>
+      <div><label>Tip</label><input id="si-type" placeholder="skin"></div>
+      <div><label>Nadirlik</label>
+        <select id="si-rarity"><option>common</option><option>rare</option><option>epic</option><option>legendary</option></select>
+      </div>
+      <div><label>Fiyat (kalıcı/consumable için)</label><input id="si-price" type="number" placeholder="120"></div>
+      <div><label>Sıra</label><input id="si-order" type="number" placeholder="99"></div>
+    </div>
+    <label>Properties (JSON)</label>
+    <textarea id="si-props" rows="3" placeholder='{"body":"#cc00ff","head":"#9900cc"}'></textarea>
+    <label>Duration Tiers (JSON, timed item ise)</label>
+    <textarea id="si-tiers" rows="3" placeholder='[{"label":"1 Saat","hours":1,"price":40},...]'></textarea>
+    <div style="margin-top:8px;display:flex;gap:8px;align-items:center">
+      <label style="margin:0"><input type="checkbox" id="si-consumable"> Consumable</label>
+      <input id="si-maxstack" type="number" placeholder="max stack" style="width:120px">
+    </div>
+    <button class="btn btn-primary" style="margin-top:12px" onclick="addShopItem()">Ürün Ekle / Güncelle</button>
+  </div>
+</div>
+
+<!-- REWARDS -->
+<div id="page-rewards" class="page">
+  <h2>Ödül Kuralları</h2>
+  <div id="msg-rewards" class="msg"></div>
+  <div class="card" style="overflow-x:auto">
+    <table id="rewards-table">
+      <thead><tr><th>ID</th><th>İsim</th><th>Koşul</th><th>Ödül</th><th>Durum</th><th></th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
+  <div class="card">
+    <h2 style="margin-bottom:12px">Yeni Kural</h2>
+    <div class="grid2">
+      <div><label>İsim</label><input id="rr-name" placeholder="5+ Kill Ödülü"></div>
+    </div>
+    <label>Koşul (JSON)</label>
+    <textarea id="rr-cond" rows="2" placeholder='{"type":"kills_gte","value":5}'></textarea>
+    <label>Ödül (JSON)</label>
+    <textarea id="rr-reward" rows="2" placeholder='{"type":"gold","amount":20}'></textarea>
+    <button class="btn btn-primary" style="margin-top:12px" onclick="addRewardRule()">Kural Ekle</button>
+  </div>
+</div>
+
+<!-- USERS -->
+<div id="page-users" class="page">
+  <h2>Kullanıcılar (son 100)</h2>
+  <div class="card" style="overflow-x:auto">
+    <table id="users-table">
+      <thead><tr><th>Kullanıcı Adı</th><th>E-posta</th><th>Altın</th><th>Oyun</th><th>Kill</th><th>Max Boy</th><th>Kayıt</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+const api = (url, opts={}) =>
+  fetch(url, { headers:{'Content-Type':'application/json'}, ...opts })
+    .then(r => r.json());
+
+function showPage(id) {
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('nav button').forEach(b => b.classList.remove('active'));
+  document.getElementById('page-' + id).classList.add('active');
+  event.target.classList.add('active');
+  if (id === 'settings') loadSettings();
+  if (id === 'shop')     loadShop();
+  if (id === 'rewards')  loadRewards();
+  if (id === 'users')    loadUsers();
+}
+
+function msg(id, text, type) {
+  const el = document.getElementById('msg-' + id);
+  el.textContent = text; el.className = 'msg ' + type;
+  setTimeout(() => el.style.display = 'none', 3000);
+}
+
+// ── Settings ──────────────────────────────────────────────────────────────
+async function loadSettings() {
+  const rows = await api('/admin/api/settings');
+  const tbody = document.querySelector('#settings-table tbody');
+  tbody.innerHTML = rows.map(r => `
+    <tr>
+      <td><code>${r.key}</code></td>
+      <td><input value="${r.value?.value ?? r.value}" style="width:120px"
+          onchange="saveSetting('${r.key}', this.value)"></td>
+      <td><button class="btn-sm btn-success" onclick="saveSetting('${r.key}',this.closest('tr').querySelector('input').value)">Kaydet</button></td>
+    </tr>`).join('');
+}
+
+async function saveSetting(key, val) {
+  await api('/admin/api/settings', { method:'PUT', body: JSON.stringify({ key, value: isNaN(val)?val:Number(val) }) });
+  msg('settings', `"${key}" güncellendi`, 'ok');
+}
+
+async function addSetting() {
+  const key = document.getElementById('new-key').value.trim();
+  const val = document.getElementById('new-val').value;
+  if (!key) return;
+  await api('/admin/api/settings', { method:'PUT', body: JSON.stringify({ key, value: Number(val) }) });
+  msg('settings', 'Eklendi', 'ok');
+  loadSettings();
+}
+
+// ── Shop ──────────────────────────────────────────────────────────────────
+const RARITY_CLS = { common:'tag-common', rare:'tag-rare', epic:'tag-epic', legendary:'tag-legendary' };
+async function loadShop() {
+  const rows = await api('/admin/api/shop');
+  const tbody = document.querySelector('#shop-table tbody');
+  tbody.innerHTML = rows.map(r => `
+    <tr style="opacity:${r.active?1:.4}">
+      <td><code style="font-size:.75rem">${r.id}</code></td>
+      <td>${r.name}</td><td>${r.category}</td><td>${r.type}</td>
+      <td><span class="tag ${RARITY_CLS[r.rarity]||''}">${r.rarity}</span></td>
+      <td>${r.duration_tiers ? '🕐 Süreli' : (r.price ?? '-')}</td>
+      <td>${r.active ? '✅' : '⛔'}</td>
+      <td><button class="btn-sm" onclick="toggleShopItem('${r.id}')">${r.active?'Kapat':'Aç'}</button></td>
+    </tr>`).join('');
+}
+
+async function toggleShopItem(id) {
+  await api('/admin/api/shop/' + id + '/toggle', { method:'PATCH' });
+  loadShop();
+}
+
+async function addShopItem() {
+  let props = {}, tiers = null;
+  try { props = JSON.parse(document.getElementById('si-props').value || '{}'); } catch { return msg('shop','Properties geçersiz JSON','err'); }
+  const tiersVal = document.getElementById('si-tiers').value.trim();
+  if (tiersVal) { try { tiers = JSON.parse(tiersVal); } catch { return msg('shop','Tiers geçersiz JSON','err'); } }
+  const body = {
+    id:         document.getElementById('si-id').value.trim(),
+    name:       document.getElementById('si-name').value.trim(),
+    description:document.getElementById('si-desc').value.trim(),
+    category:   document.getElementById('si-cat').value,
+    type:       document.getElementById('si-type').value.trim(),
+    rarity:     document.getElementById('si-rarity').value,
+    price:      tiers ? null : Number(document.getElementById('si-price').value),
+    duration_tiers: tiers,
+    properties: props,
+    is_consumable: document.getElementById('si-consumable').checked,
+    max_stack:  Number(document.getElementById('si-maxstack').value) || 1,
+    sort_order: Number(document.getElementById('si-order').value) || 99,
+  };
+  if (!body.id || !body.name) return msg('shop','ID ve İsim gerekli','err');
+  await api('/admin/api/shop', { method:'POST', body: JSON.stringify(body) });
+  msg('shop', 'Ürün eklendi/güncellendi', 'ok');
+  loadShop();
+}
+
+// ── Rewards ───────────────────────────────────────────────────────────────
+async function loadRewards() {
+  const rows = await api('/admin/api/reward-rules');
+  const tbody = document.querySelector('#rewards-table tbody');
+  tbody.innerHTML = rows.map(r => `
+    <tr style="opacity:${r.active?1:.4}">
+      <td>${r.id}</td><td>${r.name}</td>
+      <td><code style="font-size:.75rem">${JSON.stringify(r.condition)}</code></td>
+      <td><code style="font-size:.75rem">${JSON.stringify(r.reward)}</code></td>
+      <td>${r.active?'✅':'⛔'}</td>
+      <td><button class="btn-sm" onclick="toggleReward(${r.id})">${r.active?'Kapat':'Aç'}</button></td>
+    </tr>`).join('');
+}
+
+async function toggleReward(id) {
+  await api('/admin/api/reward-rules/' + id + '/toggle', { method:'PATCH' });
+  loadRewards();
+}
+
+async function addRewardRule() {
+  let cond, reward;
+  try { cond   = JSON.parse(document.getElementById('rr-cond').value); }   catch { return msg('rewards','Koşul geçersiz JSON','err'); }
+  try { reward = JSON.parse(document.getElementById('rr-reward').value); } catch { return msg('rewards','Ödül geçersiz JSON','err'); }
+  const name = document.getElementById('rr-name').value.trim();
+  if (!name) return msg('rewards','İsim gerekli','err');
+  await api('/admin/api/reward-rules', { method:'POST', body: JSON.stringify({ name, condition: cond, reward }) });
+  msg('rewards', 'Kural eklendi', 'ok');
+  loadRewards();
+}
+
+// ── Users ─────────────────────────────────────────────────────────────────
+async function loadUsers() {
+  const rows = await api('/admin/api/users');
+  const tbody = document.querySelector('#users-table tbody');
+  tbody.innerHTML = rows.map(r => `
+    <tr>
+      <td>${r.username}</td><td>${r.email}</td>
+      <td>🪙 ${r.gold}</td>
+      <td>${r.games_played ?? 0}</td><td>${r.total_kills ?? 0}</td><td>${r.max_size ?? 0}</td>
+      <td style="font-size:.75rem;color:#666">${new Date(r.created_at).toLocaleDateString('tr')}</td>
+    </tr>`).join('');
+}
+
+// Init
+loadSettings();
+</script>
+</body>
+</html>

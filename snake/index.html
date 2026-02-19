@@ -1,63 +1,140 @@
 <!DOCTYPE html>
 <html lang="tr">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Snake Wars</title>
-  <link rel="stylesheet" href="/snake/style.css" />
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Snake Wars</title>
+<link rel="stylesheet" href="/snake/style.css">
 </head>
 <body>
 
-  <!-- ── Hero selection ─────────────────────────────────────────────────── -->
-  <div id="selection">
-    <div id="sel-panel">
-      <div class="logo">🐍 Snake Wars</div>
-      <p class="sub">Büyü, yakala, yut!</p>
-
-      <label class="field-label">Oyuncu Adı</label>
-      <input id="nick" type="text" maxlength="16" placeholder="Takma adını gir…" autocomplete="off" />
-
-      <label class="field-label">Karakterini Seç</label>
-      <div id="hero-grid">
-        <div class="hero-card" data-animal="snake"  data-color="#2ed573"><span class="he">🐍</span><span class="hn">Yılan</span></div>
-        <div class="hero-card" data-animal="fox"    data-color="#ff9f43"><span class="he">🦊</span><span class="hn">Tilki</span></div>
-        <div class="hero-card" data-animal="dragon" data-color="#a29bfe"><span class="he">🐉</span><span class="hn">Ejder</span></div>
-        <div class="hero-card" data-animal="lion"   data-color="#ffd700"><span class="he">🦁</span><span class="hn">Aslan</span></div>
-        <div class="hero-card" data-animal="wolf"   data-color="#b2bec3"><span class="he">🐺</span><span class="hn">Kurt</span></div>
-        <div class="hero-card" data-animal="bear"   data-color="#c8a07a"><span class="he">🐻</span><span class="hn">Ayı</span></div>
-      </div>
-
-      <button id="play-btn" disabled>▶ Oyuna Gir</button>
-
-      <p class="hint">Hareketi: fare imleci ile yönlendir</p>
+<!-- ── ROOMS SCREEN ──────────────────────────────────────────────────────── -->
+<div id="rooms-screen" class="screen">
+  <div class="screen-inner">
+    <h1 class="logo">🐍 Snake Wars</h1>
+    <div class="rooms-toolbar">
+      <button class="btn-primary" onclick="UI.openCreateRoom()">+ Oda Oluştur</button>
+      <button class="btn-ghost"   onclick="UI.refreshRooms()">↻ Yenile</button>
+    </div>
+    <div id="rooms-list" class="rooms-list">
+      <div class="rooms-empty">Aktif oda yok. İlk odayı sen oluştur!</div>
     </div>
   </div>
+</div>
 
-  <!-- ── Game canvas ────────────────────────────────────────────────────── -->
-  <div id="game" class="hidden">
-    <canvas id="cvs"></canvas>
-
-    <!-- Dead overlay -->
-    <div id="dead" class="hidden">
-      <div id="dead-box">
-        <div class="dead-icon">💀</div>
-        <h2>Öldün!</h2>
-        <p>Skor: <strong id="dead-score">0</strong></p>
-        <button id="respawn-btn">🔄 Yeniden Başla</button>
-      </div>
+<!-- ── CREATE ROOM MODAL ─────────────────────────────────────────────────── -->
+<div id="create-modal" class="modal-overlay hidden">
+  <div class="modal">
+    <h2>Yeni Oda</h2>
+    <label>Oda Adı</label>
+    <input id="room-name" placeholder="Benim Odam" maxlength="40">
+    <label>Kapasite (2–15)</label>
+    <input id="room-cap" type="number" min="2" max="15" value="8">
+    <label>Şifre (opsiyonel)</label>
+    <input id="room-pw" type="password" placeholder="Boş bırak = açık oda">
+    <div class="row-check">
+      <input type="checkbox" id="room-npc" checked>
+      <label for="room-npc">Boş slotları NPC ile doldur</label>
+    </div>
+    <div class="modal-btns">
+      <button class="btn-ghost"   onclick="UI.closeModal()">İptal</button>
+      <button class="btn-primary" onclick="UI.createRoom()">Oluştur</button>
     </div>
   </div>
+</div>
 
-  <!-- Chat overlay -->
+<!-- ── JOIN PASSWORD MODAL ───────────────────────────────────────────────── -->
+<div id="join-modal" class="modal-overlay hidden">
+  <div class="modal">
+    <h2>🔒 Şifreli Oda</h2>
+    <p style="color:#aaa;font-size:.9rem;margin-bottom:12px">Bu oda şifre korumalı.</p>
+    <label>Şifre</label>
+    <input id="join-pw" type="password" placeholder="Şifreyi gir"
+           onkeydown="if(event.key==='Enter')UI.confirmJoin()">
+    <div class="modal-btns">
+      <button class="btn-ghost"   onclick="UI.closeModal()">İptal</button>
+      <button class="btn-primary" onclick="UI.confirmJoin()">Katıl</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── LOBBY SCREEN ───────────────────────────────────────────────────────── -->
+<div id="lobby-screen" class="screen hidden">
+  <div class="screen-inner">
+    <div class="lobby-header">
+      <button class="btn-ghost btn-sm" onclick="UI.leaveRoom()">← Çık</button>
+      <h2 id="lobby-room-name">Oda</h2>
+      <span id="lobby-cap" class="cap-badge">0/8</span>
+    </div>
+
+    <div class="hero-section">
+      <input id="nick" class="nick-input" placeholder="Takma adın…" maxlength="16">
+      <div class="hero-cards" id="hero-cards">
+        <div class="hero-card" data-animal="snake"  data-color="#2ed573">🐍 Yılan</div>
+        <div class="hero-card" data-animal="fox"    data-color="#ff9f43">🦊 Tilki</div>
+        <div class="hero-card" data-animal="dragon" data-color="#a29bfe">🐉 Ejder</div>
+        <div class="hero-card" data-animal="lion"   data-color="#ffeaa7">🦁 Aslan</div>
+        <div class="hero-card" data-animal="wolf"   data-color="#b2bec3">🐺 Kurt</div>
+        <div class="hero-card" data-animal="bear"   data-color="#c8a07a">🐻 Ayı</div>
+      </div>
+    </div>
+
+    <div class="lobby-players" id="lobby-players"></div>
+
+    <div class="lobby-footer">
+      <p class="lobby-hint" id="lobby-hint">En az 2 kişi hazır olunca oyun başlar.</p>
+      <button id="ready-btn" class="btn-primary btn-lg" onclick="UI.toggleReady()" disabled>Hazır</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── COUNTDOWN ─────────────────────────────────────────────────────────── -->
+<div id="countdown-screen" class="screen hidden">
+  <div class="screen-inner center">
+    <div class="countdown-number" id="countdown-num">5</div>
+    <p style="color:#aaa;margin-top:16px">Oyun başlıyor…</p>
+  </div>
+</div>
+
+<!-- ── GAME ───────────────────────────────────────────────────────────────── -->
+<div id="game" class="hidden">
+  <canvas id="cvs"></canvas>
   <div id="chat-wrap">
     <div id="chat-msgs"></div>
     <div id="chat-input-wrap" class="hidden">
-      <div id="chat-hint">💬 Mesaj yaz — <kbd>Enter</kbd> gönder, <kbd>Esc</kbd> kapat</div>
-      <input id="chat-input" type="text" maxlength="120" placeholder="Mesajını yaz…" autocomplete="off" />
+      <input id="chat-input" placeholder="Mesaj yaz…" maxlength="120">
     </div>
   </div>
+  <button id="kb-btn" title="Tuş bağlamaları" onclick="UI.openKeybindings()">⌨️</button>
+</div>
 
-  <script src="/socket.io/socket.io.js"></script>
-  <script src="/snake/game.js"></script>
+<!-- ── MATCH END ──────────────────────────────────────────────────────────── -->
+<div id="match-end" class="screen hidden">
+  <div class="screen-inner">
+    <h2 class="logo">Maç Bitti! 🏆</h2>
+    <div id="match-leaderboard" class="leaderboard"></div>
+    <div id="match-rewards"     class="rewards-box"></div>
+    <div class="modal-btns" style="margin-top:24px">
+      <button class="btn-ghost"   onclick="UI.backToRooms()">Ana Menü</button>
+      <button class="btn-primary" onclick="UI.rejoinRoom()">Tekrar Oyna</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── KEYBINDINGS MODAL ──────────────────────────────────────────────────── -->
+<div id="kb-modal" class="modal-overlay hidden">
+  <div class="modal">
+    <h2>⌨️ Tuş Bağlamaları</h2>
+    <p style="color:#888;font-size:.8rem;margin-bottom:12px">Değiştirmek için butona bas, sonra tuşa bas.</p>
+    <div id="kb-list"></div>
+    <div class="modal-btns">
+      <button class="btn-ghost"   onclick="resetKeybindings()">Varsayılana Sıfırla</button>
+      <button class="btn-primary" onclick="UI.closeModal()">Kapat</button>
+    </div>
+  </div>
+</div>
+
+<script src="/socket.io/socket.io.js"></script>
+<script src="/snake/game.js"></script>
 </body>
 </html>
