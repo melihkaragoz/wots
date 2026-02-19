@@ -461,7 +461,7 @@ function swBuild() {
   };
 }
 
-const BOMB_RADIUS = 750;
+const BOMB_RADIUS = 375;
 const BOMB_DAMAGE = 300;
 
 function swCheckBombs() {
