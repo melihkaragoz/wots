@@ -120,32 +120,63 @@ router.post('/end', verifyToken, async (req, res) => {
       client.release();
     }
 
-    // Auto-claim gold rewards
+    // Auto-claim ALL rewards (gold + items)
     const goldRewards = pendingInserts.filter(p => p.gold_amount);
     if (goldRewards.length) {
       const bonus = goldRewards.reduce((s, p) => s + p.gold_amount, 0);
       await db.query('UPDATE users SET gold = gold + $1 WHERE id = $2', [bonus, req.user.userId]);
+    }
+
+    // Auto-claim item rewards into inventory
+    const itemRewards = pendingInserts.filter(p => p.item_id);
+    for (const ir of itemRewards) {
+      const expiresAt = ir.duration_hours
+        ? new Date(Date.now() + ir.duration_hours * 3600 * 1000)
+        : null;
+      await db.query(
+        `INSERT INTO user_inventory (user_id, item_id, quantity, expires_at)
+         VALUES ($1, $2, 1, $3)
+         ON CONFLICT (user_id, item_id) DO UPDATE
+         SET quantity = user_inventory.quantity + 1,
+             expires_at = GREATEST(user_inventory.expires_at, EXCLUDED.expires_at)`,
+        [req.user.userId, ir.item_id, expiresAt]
+      );
+    }
+
+    // Mark all pending rewards as claimed
+    if (pendingInserts.length) {
       await db.query(
         `UPDATE pending_rewards SET claimed = TRUE
-         WHERE user_id = $1 AND claimed = FALSE AND item_id IS NULL`,
+         WHERE user_id = $1 AND claimed = FALSE`,
         [req.user.userId]
       );
     }
 
     const { rows: goldRow } = await db.query('SELECT gold FROM users WHERE id = $1', [req.user.userId]);
 
-    res.json({
-      gold_earned,
-      bonus_gold: goldRewards.reduce((s, p) => s + p.gold_amount, 0),
-      new_total_gold: goldRow[0].gold,
-      stats,
-      rewards: pendingInserts.map(p => ({
+    // Get item names for response
+    const rewardDetails = [];
+    for (const p of pendingInserts) {
+      const detail = {
         reason: p.reason,
         type: p.gold_amount ? 'gold' : 'item',
         amount: p.gold_amount,
         item_id: p.item_id,
         duration_hours: p.duration_hours,
-      })),
+      };
+      if (p.item_id) {
+        const { rows: itemRows } = await db.query('SELECT name FROM shop_items WHERE id = $1', [p.item_id]);
+        detail.item_name = itemRows[0]?.name || null;
+      }
+      rewardDetails.push(detail);
+    }
+
+    res.json({
+      gold_earned,
+      bonus_gold: goldRewards.reduce((s, p) => s + p.gold_amount, 0),
+      new_total_gold: goldRow[0].gold,
+      stats,
+      rewards: rewardDetails,
     });
   } catch (e) {
     console.error(e);

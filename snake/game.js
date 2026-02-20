@@ -52,6 +52,7 @@ let predX = 0, predY = 0, predReady = false;
 
 // Mouse
 let mouseClientX = 0, mouseClientY = 0;
+let mouseX = 0, mouseY = 0;
 let boosting = false;
 
 // Slingshot
@@ -72,7 +73,8 @@ window.addEventListener('resize', resize);
 resize();
 
 // ── Socket ────────────────────────────────────────────────────────────────
-const socket = io('/snake');
+const _savedToken = localStorage.getItem('snakeToken');
+const socket = io('/snake', _savedToken ? { auth: { token: _savedToken } } : {});
 
 // ── Screen management ─────────────────────────────────────────────────────
 const ALL_SCREENS = ['rooms-screen', 'lobby-screen', 'countdown-screen', 'game', 'match-end'];
@@ -97,10 +99,12 @@ function resetGameState() {
 // ── UI object (referenced from HTML onclick attrs) ─────────────────────────
 const UI = {
   openCreateRoom() {
+    SFX.uiOpen();
     document.getElementById('create-modal').classList.remove('hidden');
   },
 
   closeModal() {
+    SFX.uiClose();
     document.querySelectorAll('.modal-overlay').forEach(m => m.classList.add('hidden'));
     listeningFor = null;
     document.querySelectorAll('.kb-key').forEach(k => k.classList.remove('listening'));
@@ -111,11 +115,12 @@ const UI = {
   },
 
   createRoom() {
-    const name    = document.getElementById('room-name').value.trim() || 'Oda';
-    const cap     = parseInt(document.getElementById('room-cap').value) || 8;
-    const pw      = document.getElementById('room-pw').value || null;
-    const npcFill = document.getElementById('room-npc').checked;
-    socket.emit('create_room', { name, capacity: cap, npcFill, password: pw || undefined });
+    const name     = document.getElementById('room-name').value.trim() || 'Oda';
+    const cap      = parseInt(document.getElementById('room-cap').value) || 8;
+    const pw       = document.getElementById('room-pw').value || null;
+    const npcFill  = document.getElementById('room-npc').checked;
+    const duration = parseInt(document.getElementById('room-duration').value) || 10;
+    socket.emit('create_room', { name, capacity: cap, npcFill, password: pw || undefined, duration });
     UI.closeModal();
   },
 
@@ -144,6 +149,7 @@ const UI = {
   },
 
   toggleReady() {
+    SFX.uiClick();
     lobbyReady = !lobbyReady;
     const btn = document.getElementById('ready-btn');
     if (btn) {
@@ -197,10 +203,17 @@ function initLobby(roomState) {
   document.getElementById('lobby-room-name').textContent = roomState.name || 'Oda';
   document.getElementById('lobby-cap').textContent       = `0/${roomState.capacity || '?'}`;
   document.getElementById('lobby-players').innerHTML     = '';
-  document.getElementById('lobby-hint').textContent      = 'En az 2 kişi hazır olunca oyun başlar.';
+  document.getElementById('lobby-hint').textContent      = 'Hazır butonuna bas, oyun başlasın!';
+  const lcMsgs = document.getElementById('lobby-chat-msgs');
+  if (lcMsgs) lcMsgs.innerHTML = '';
   lobbyReady = false;
   const btn = document.getElementById('ready-btn');
   if (btn) { btn.textContent = 'Hazır'; btn.classList.remove('btn-ready-active'); }
+  // Pre-fill nick from auth username if available and no saved nick
+  if (Auth.isLoggedIn() && !lobbyNick) {
+    lobbyNick = Auth.getUsername();
+    localStorage.setItem('snakeNick', lobbyNick);
+  }
   // Restore saved nick in the input
   const nickEl = document.getElementById('nick');
   if (nickEl) { nickEl.value = lobbyNick; }
@@ -250,11 +263,19 @@ function renderRooms(list) {
     el.innerHTML = '<div class="rooms-empty">Aktif oda yok. İlk odayı sen oluştur!</div>';
     return;
   }
+  const statusLabels = {
+    waiting:   '<span class="room-status room-status-waiting">Beklemede</span>',
+    countdown: '<span class="room-status room-status-countdown">Geri Sayım</span>',
+    playing:   '<span class="room-status room-status-playing">Oyunda</span>',
+    finished:  '<span class="room-status room-status-finished">Bitiyor</span>',
+  };
   el.innerHTML = list.map(r => `
     <div class="room-card" onclick="UI.joinRoom('${r.id}',${!!r.hasPassword})">
       <span class="room-name">${escHtml(r.name)}${r.hasPassword ? ' 🔒' : ''}</span>
       <span class="room-info">
+        ${statusLabels[r.status] || ''}
         <span class="cap-badge">${r.playerCount}/${r.capacity}</span>
+        <span style="color:#888;font-size:.72rem">${r.duration || 10}dk</span>
         ${r.npcFill ? ' 🤖' : ''}
       </span>
     </div>
@@ -292,9 +313,24 @@ function renderMatchEnd(leaderboard) {
 }
 
 // ── Socket events ─────────────────────────────────────────────────────────
+let authInited = false;
 socket.on('connect', () => {
   myId = 'p_' + socket.id;
-  socket.emit('list_rooms');
+  if (currentRoomId) {
+    // Re-join room after reconnect (e.g. after login)
+    socket.emit('join_room', {
+      roomId: currentRoomId,
+      name: lobbyNick || 'Oyuncu',
+      animal: lobbySelectedAnimal,
+    });
+  } else {
+    socket.emit('list_rooms');
+    showScreen('rooms-screen');
+  }
+  if (!authInited) {
+    authInited = true;
+    Auth.init();
+  }
 });
 
 socket.on('rooms_list', (list) => {
@@ -311,8 +347,15 @@ socket.on('room_created', ({ roomId }) => {
 
 socket.on('room_joined', ({ roomId, roomState }) => {
   currentRoomId = roomId;
-  initLobby(roomState);
-  if (roomState.players) renderLobbyPlayers(roomState.players, roomState.capacity);
+  currentRoomData = roomState;
+  if (roomState.status === 'playing') {
+    // Mid-match join — match_start will be emitted by server for this socket
+    resetGameState();
+    matchRunning = true;
+  } else {
+    initLobby(roomState);
+    if (roomState.players) renderLobbyPlayers(roomState.players, roomState.capacity);
+  }
 });
 
 socket.on('room_state', (state) => {
@@ -327,6 +370,8 @@ socket.on('room_state', (state) => {
 socket.on('countdown', ({ seconds }) => {
   document.getElementById('countdown-num').textContent = seconds;
   showScreen('countdown-screen');
+  if (seconds > 0) SFX.countdownTick();
+  else SFX.countdownGo();
 });
 
 socket.on('countdown_cancelled', () => {
@@ -337,9 +382,14 @@ socket.on('match_start', ({ mapW: mW, mapH: mH }) => {
   mapW = mW || 5000; mapH = mH || 5000;
   resetGameState();
   matchRunning = true;
+  const deadEl = document.getElementById('dead');
+  if (deadEl) deadEl.classList.add('hidden');
   showScreen('game');
+  SFX.matchStart();
 });
 
+let lastMyScore = 0;
+let lastMyKills = 0;
 socket.on('tick', (state) => {
   snakes = state.snakes || snakes;
   fruits = state.fruits || fruits;
@@ -355,7 +405,28 @@ socket.on('tick', (state) => {
       predX += (me.x - predX) * 0.25;
       predY += (me.y - predY) * 0.25;
     }
+    // Detect score increase → fruit eat sound
+    if (me.score > lastMyScore && lastMyScore > 0) {
+      if (me.score - lastMyScore >= 5) SFX.eatSoul();
+      else SFX.eatFruit();
+    }
+    // Detect kill
+    if ((me.kills || 0) > lastMyKills && lastMyKills > 0) SFX.kill();
+    lastMyScore = me.score;
+    lastMyKills = me.kills || 0;
+
+    const wasAlive = alive;
     alive = me.alive;
+    // Death / respawn overlay + sounds
+    const deadEl = document.getElementById('dead');
+    if (wasAlive && !alive && deadEl) {
+      SFX.death();
+      document.getElementById('dead-score').textContent = `Skor: ${me.score || 0}`;
+      deadEl.classList.remove('hidden');
+    } else if (!wasAlive && alive && deadEl) {
+      SFX.respawn();
+      deadEl.classList.add('hidden');
+    }
   }
 });
 
@@ -363,17 +434,41 @@ socket.on('mineHit', ({ id, x, y, snakeId }) => {
   mines = mines.filter(m => m.id !== id);
   bombBlasts.push({ wx: x, wy: y, timer: 30, maxTimer: 30, radius: 120 });
   hitFlashes[snakeId] = 25;
+  // Only play impact SFX if local player was hit
+  if (snakeId === myId) SFX.mineHit();
 });
 
 socket.on('bombExplode', ({ x, y, hits, radius }) => {
-  bombBlasts.push({ wx: x, wy: y, timer: 50, maxTimer: 50, radius: radius || 375 });
+  const r = radius || 375;
+  const meHit = (hits || []).includes(myId);
+  bombBlasts.push({ wx: x, wy: y, timer: 50, maxTimer: 50, radius: r, meHit });
   for (const id of (hits || [])) hitFlashes[id] = 20;
+  // Only play explosion SFX if local player was hit or explosion is nearby
+  const me = snakes.find(s => s.id === myId);
+  const dist = me ? Math.hypot(me.x - x, me.y - y) : Infinity;
+  if (meHit || dist < r * 2) SFX.bombExplode();
 });
 
-socket.on('match_end', ({ leaderboard }) => {
+socket.on('match_end', ({ leaderboard, duration_sec }) => {
   matchRunning = false;
+  SFX.matchEnd();
+  const myEntry = (leaderboard || []).find(e => e.socketId === socket.id);
   renderMatchEnd(leaderboard);
   showScreen('match-end');
+  // Claim rewards for logged-in users
+  if (Auth.isLoggedIn() && myEntry) {
+    const stats = {
+      kills: myEntry.kills || 0,
+      max_size: myEntry.maxSize || 0,
+      duration_sec: duration_sec || 0,
+      rank: myEntry.rank || 99,
+    };
+    Auth.claimMatchRewards(stats).then(result => {
+      const rw = document.getElementById('match-rewards');
+      if (rw) Auth.renderRewardsBox(rw, result);
+      if (result && result.gold_earned > 0) SFX.goldEarned();
+    });
+  }
 });
 
 socket.on('room_closed', () => {
@@ -381,6 +476,14 @@ socket.on('room_closed', () => {
   currentRoomId = null;
   showScreen('rooms-screen');
   socket.emit('list_rooms');
+});
+
+socket.on('room_reset', () => {
+  resetGameState();
+  lobbyReady = false;
+  const btn = document.getElementById('ready-btn');
+  if (btn) { btn.textContent = 'Hazır'; btn.classList.remove('btn-ready-active'); }
+  showScreen('lobby-screen');
 });
 
 socket.on('you_are_host', () => {
@@ -399,9 +502,12 @@ socket.on('player_shielded', ({ id }) => {
 
 socket.on('chatMsg', ({ name, emoji, msg }) => {
   addChatMsg(name, emoji, msg);
+  addLobbyChatMsg(name, emoji, msg);
+  SFX.chat();
 });
 
 socket.on('error', ({ msg }) => {
+  SFX.error();
   console.warn('Server error:', msg);
   const old = document.getElementById('sw-err-toast');
   if (old) old.remove();
@@ -447,6 +553,27 @@ function sendChat() {
   closeChat();
 }
 
+// Lobby chat
+function addLobbyChatMsg(name, emoji, msg) {
+  const el = document.getElementById('lobby-chat-msgs');
+  if (!el) return;
+  const div = document.createElement('div');
+  div.className = 'lobby-chat-msg';
+  div.innerHTML = `<span class="lcm-who">${emoji} ${escHtml(name)}:</span>${escHtml(msg)}`;
+  el.appendChild(div);
+  while (el.children.length > 30) el.removeChild(el.firstChild);
+  el.scrollTop = el.scrollHeight;
+}
+
+function sendLobbyChat() {
+  const input = document.getElementById('lobby-chat-input');
+  if (!input) return;
+  const msg = input.value.trim();
+  if (!msg) return;
+  socket.emit('chat', { msg });
+  input.value = '';
+}
+
 chatInput.addEventListener('keydown', e => {
   e.stopPropagation();
   if (e.key === 'Enter')  { e.preventDefault(); sendChat(); }
@@ -478,11 +605,13 @@ document.addEventListener('touchstart', e => {
 canvas.addEventListener('mousedown', e => {
   if (e.button !== 0 || !matchRunning || !alive) return;
   boosting = true;
+  SFX.boostOn();
   socket.emit('boost', { on: true });
 });
 document.addEventListener('mouseup', e => {
   if (e.button !== 0 || !boosting) return;
   boosting = false;
+  SFX.boostOff();
   socket.emit('boost', { on: false });
 });
 document.addEventListener('mouseleave', () => {
@@ -503,9 +632,9 @@ document.addEventListener('keydown', e => {
     spaceHeld = true; spaceStartTime = Date.now(); return;
   }
   if (alive) {
-    if (e.code === kb.invisibility) { e.preventDefault(); socket.emit('use_active', { type: 'invisibility' }); }
-    if (e.code === kb.shield)       { e.preventDefault(); socket.emit('use_active', { type: 'shield' }); }
-    if (e.code === kb.dash)         { e.preventDefault(); socket.emit('use_active', { type: 'dash' }); }
+    if (e.code === kb.invisibility) { e.preventDefault(); SFX.invisibility(); socket.emit('use_active', { type: 'invisibility' }); }
+    if (e.code === kb.shield)       { e.preventDefault(); SFX.shield(); socket.emit('use_active', { type: 'shield' }); }
+    if (e.code === kb.dash)         { e.preventDefault(); SFX.dash(); socket.emit('use_active', { type: 'dash' }); }
   }
 });
 
@@ -516,6 +645,7 @@ document.addEventListener('keyup', e => {
     if (!alive || !matchRunning) return;
     const charge = Math.min(1, (Date.now() - spaceStartTime) / 2000);
     if (charge > 0.05) {
+      SFX.bombThrow();
       const snakeSX = predX - cam.x, snakeSY = predY - cam.y;
       socket.emit('throwBomb', {
         dir:   Math.atan2(mouseClientY - snakeSY, mouseClientX - snakeSX),
@@ -591,6 +721,13 @@ function resetKeybindings() {
   kb = { ...DEFAULT_KB };
   saveKB();
   renderKBList();
+}
+
+// ── Volume toggle ─────────────────────────────────────────────────────────
+function toggleVolBtn() {
+  const muted = SFX.toggleMute();
+  const btn = document.getElementById('vol-btn');
+  if (btn) btn.textContent = muted ? '🔇' : '🔊';
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────
@@ -747,7 +884,7 @@ function render() {
       grd.addColorStop(1, 'transparent');
       ctx.fillStyle = grd; ctx.beginPath(); ctx.arc(sx, sy, fb, 0, Math.PI * 2); ctx.fill();
     }
-    if (bl.timer > bl.maxTimer * 0.75) {
+    if (bl.timer > bl.maxTimer * 0.75 && bl.meHit) {
       ctx.fillStyle = `rgba(255,120,0,${alpha * 0.18})`; ctx.fillRect(0, 0, W, H);
     }
   }
@@ -972,9 +1109,13 @@ function drawHUD(W, H) {
   }
 
   // Player info — top left
-  const topTxt = me
+  let topTxt = me
     ? `${me.emoji} ${me.name}  |  Skor: ${me.score}  |  Boy: ${me.len}`
     : 'Bağlanılıyor…';
+  if (me && Auth.isLoggedIn()) {
+    const gold = document.getElementById('header-gold')?.textContent || '0';
+    topTxt += `  |  💰 ${gold}`;
+  }
   ctx.fillStyle = 'rgba(255,255,255,0.88)';
   ctx.font = 'bold 15px Arial'; ctx.textAlign = 'left'; ctx.textBaseline = 'top';
   ctx.fillText(topTxt, 14, 14);

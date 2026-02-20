@@ -97,25 +97,8 @@ app.post('/api/rooms', (req, res) => {
 
 // ── Post-match DB handler ──────────────────────────────────────────────────
 async function handleMatchEnd({ roomId, leaderboard }) {
-  for (const entry of leaderboard) {
-    if (!entry.userId) continue;
-    try {
-      await db.query('UPDATE users SET gold = gold + $1 WHERE id = $2', [
-        Math.floor(entry.score / 10), entry.userId,
-      ]);
-      await db.query(
-        `INSERT INTO user_stats (user_id, total_kills, max_size, total_seconds, games_played)
-         VALUES ($1,$2,$3,$4,1)
-         ON CONFLICT (user_id) DO UPDATE SET
-           total_kills   = user_stats.total_kills   + EXCLUDED.total_kills,
-           max_size      = GREATEST(user_stats.max_size, EXCLUDED.max_size),
-           total_seconds = user_stats.total_seconds + EXCLUDED.total_seconds,
-           games_played  = user_stats.games_played  + 1`,
-        [entry.userId, entry.kills || 0, entry.maxSize || 0,
-         gameSettings.match_duration_sec || 300]
-      );
-    } catch (e) { console.error('match_end DB error:', e.message); }
-  }
+  // Gold + stats are handled by the client via POST /api/match/end
+  // This handler is intentionally empty to prevent double-writes
 }
 
 // Optional JWT auth on socket connect
@@ -136,20 +119,21 @@ swIo.on('connection', (socket) => {
   // ── Room: list ──────────────────────────────────────────────────────────
   socket.on('list_rooms', () => {
     socket.emit('rooms_list', Object.values(activeRooms)
-      .filter(r => r.status === 'waiting' || r.status === 'countdown')
       .map(r => r.toListItem())
     );
   });
 
   // ── Room: create ────────────────────────────────────────────────────────
-  socket.on('create_room', ({ name, capacity, npcFill, password }) => {
+  socket.on('create_room', ({ name, capacity, npcFill, password, duration }) => {
     const maxCap = gameSettings.online_room_max_capacity || 15;
     const cap = Math.min(maxCap, Math.max(2, parseInt(capacity) || 8));
+    const dur = [5, 10, 15, 20].includes(parseInt(duration)) ? parseInt(duration) : 10;
     const room = createRoom({
       name: (name || 'Oda').slice(0, 40),
       capacity: cap,
       npcFill: npcFill !== false,
       password: password || null,
+      duration: dur,
     });
     socket.emit('room_created', { roomId: room.id });
   });
@@ -158,7 +142,6 @@ swIo.on('connection', (socket) => {
   socket.on('join_room', ({ roomId, name, animal, password: pw }) => {
     const room = activeRooms[roomId];
     if (!room) return socket.emit('error', { msg: 'Oda bulunamadı' });
-    if (room.status !== 'waiting') return socket.emit('error', { msg: 'Oyun zaten başladı' });
     if (room.isFull) return socket.emit('error', { msg: 'Oda dolu' });
     if (room.password && room.password !== pw)
       return socket.emit('error', { msg: 'Yanlış şifre' });
@@ -244,6 +227,7 @@ async function getUserMods(userId) {
 
   const mods = {};
   const activeAbilities = {};
+  let skinColors = null;
 
   for (const [slot, itemId] of Object.entries(slots)) {
     if (!itemId) continue;
@@ -257,6 +241,13 @@ async function getUserMods(userId) {
     );
     if (!rows.length) continue;
     const { type, properties: p } = rows[0];
+    // Appearance items
+    if (type === 'skin')          skinColors = { body: p.body, head: p.head };
+    if (type === 'gradient')      skinColors = { body: p.from || p.colors?.[0], head: p.to || p.colors?.[1], gradient: p };
+    if (type === 'pattern')       mods.pattern = p;
+    if (type === 'effect')        mods.effect  = p;
+    if (type === 'trail')         mods.trail   = p;
+    // Upgrade items
     if (type === 'magnet')        mods.attract_range = p.attract_range;
     if (type === 'boost_upgrade') { mods.boost_speed_mult = p.speed_mult; mods.boost_drain_div = p.drain_div; }
     if (type === 'bomb_radius')   mods.radius_bonus  = p.radius_bonus;
@@ -268,7 +259,7 @@ async function getUserMods(userId) {
     if (type === 'dash')          activeAbilities.dash = p;
   }
 
-  return { ...mods, activeAbilities };
+  return { ...mods, skinColors, activeAbilities };
 }
 
 // ── Startup ────────────────────────────────────────────────────────────────

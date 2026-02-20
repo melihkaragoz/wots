@@ -72,7 +72,7 @@ router.post('/buy', verifyToken, async (req, res) => {
     let price = item.price;
     let expiresAt = null;
 
-    if (item.duration_tiers) {
+    if (item.duration_tiers && item.duration_tiers.length) {
       const tiers = item.duration_tiers;
       const tier = tiers.find(t => t.hours === duration_hours);
       if (!tier) return res.status(400).json({ error: 'Geçersiz süre seçeneği' });
@@ -98,7 +98,7 @@ router.post('/buy', verifyToken, async (req, res) => {
         [req.user.userId, item_id]
       );
       if (owned.length && (!owned[0].expires_at || new Date(owned[0].expires_at) > new Date())) {
-        if (item.duration_tiers) {
+        if (item.duration_tiers && item.duration_tiers.length) {
           // Renew: extend expires_at
           await client.query(
             `UPDATE user_inventory SET expires_at = $1 WHERE user_id = $2 AND item_id = $3`,

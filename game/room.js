@@ -31,7 +31,8 @@ class GameRoom {
     this.name     = config.name;
     this.capacity = config.capacity || 8;
     this.npcFill  = config.npcFill !== false;
-    this.password = config.password || null;  // plaintext (hashed externally if needed)
+    this.password = config.password || null;
+    this.duration = config.duration || 10;    // match duration in minutes
     this.settings = settings;
     this.io       = io;
 
@@ -67,14 +68,24 @@ class GameRoom {
   get isFull()         { return this.playerCount >= this.capacity; }
 
   // ── Player management ────────────────────────────────────────────────────
-  addPlayer(socket, { name, animal, emoji, userId }) {
+  addPlayer(socket, { name, animal, emoji, userId, mods }) {
     if (this.isFull) return false;
     const isHost = this.playerCount === 0;
     this.players[socket.id] = {
       socketId: socket.id, userId, name, animal, emoji,
-      ready: false, isHost,
+      ready: false, isHost, mods: mods || {},
     };
     socket.join(`room:${this.id}`);
+
+    // Mid-match join: spawn player immediately into the running game
+    if (this.status === 'playing' && this.gs) {
+      this._spawnPlayer(socket.id, this.players[socket.id]);
+      socket.emit('match_start', {
+        duration_sec: this.duration * 60,
+        mapW: SW_W, mapH: SW_H,
+      });
+    }
+
     this.broadcastRoomState();
     return true;
   }
@@ -112,9 +123,9 @@ class GameRoom {
     this.players[socketId].ready = ready;
     this.broadcastRoomState();
 
-    if (this.readyCount >= 2 && this.status === 'waiting') {
+    if (this.readyCount >= 1 && this.status === 'waiting') {
       this._startCountdown();
-    } else if (this.readyCount < 2 && this.status === 'countdown') {
+    } else if (this.readyCount < 1 && this.status === 'countdown') {
       this._cancelCountdown();
     }
   }
@@ -149,7 +160,7 @@ class GameRoom {
   _startMatch() {
     this.status   = 'playing';
     this.tick     = 0;
-    this.timeLeft = (this.settings.match_duration_sec || 300) * 30; // ticks
+    this.timeLeft = this.duration * 60 * 30; // ticks (duration in minutes × 60s × 30fps)
     this.gs = { snakes: {}, fruits: {}, bombs: {}, mines: {}, playerMap: {} };
 
     for (let i = 0; i < SW_FRUITS; i++) this._spawnFruit();
@@ -158,7 +169,7 @@ class GameRoom {
     for (const [sid, p] of Object.entries(this.players)) this._spawnPlayer(sid, p);
 
     this.broadcast('match_start', {
-      duration_sec: this.settings.match_duration_sec || 300,
+      duration_sec: this.duration * 60,
       mapW: SW_W, mapH: SW_H,
     });
     this.gameLoopId = setInterval(() => this._tickLoop(), 1000 / 30);
@@ -234,16 +245,29 @@ class GameRoom {
 
     leaderboard.forEach((e, i) => { e.rank = i + 1; });
 
-    this.broadcast('match_end', { leaderboard, duration_sec: this.settings.match_duration_sec || 300 });
+    this.broadcast('match_end', { leaderboard, duration_sec: this.duration * 60 });
     this._emit('match_end', { roomId: this.id, leaderboard });
 
-    // Auto-destroy room after 30s
-    setTimeout(() => this._destroy(), 30000);
+    // Reset to lobby after 15s so players can play again
+    this._resetTimer = setTimeout(() => this._resetToLobby(), 15000);
+  }
+
+  _resetToLobby() {
+    if (this._resetTimer) { clearTimeout(this._resetTimer); this._resetTimer = null; }
+    this.gs = null;
+    this.tick = 0;
+    this.timeLeft = 0;
+    this.status = 'waiting';
+    // Reset all players' ready state
+    for (const p of Object.values(this.players)) p.ready = false;
+    this.broadcast('room_reset', {});
+    this.broadcastRoomState();
   }
 
   _destroy() {
     if (this.gameLoopId)  clearInterval(this.gameLoopId);
     if (this.countdownId) clearInterval(this.countdownId);
+    if (this._resetTimer) clearTimeout(this._resetTimer);
     this.broadcast('room_closed', {});
     this._emit('destroyed', { roomId: this.id });
   }
@@ -252,6 +276,9 @@ class GameRoom {
   _spawnPlayer(socketId, p) {
     const a = SW_ANIMALS.find(a => a.id === p.animal) || SW_ANIMALS[0];
     const mods = p.mods || {};
+    const skin = mods.skinColors;
+    const bodyColor = skin?.body || a.body;
+    const headColor = skin?.head || a.head;
     const startLen = 20 + (mods.bonus_size || 0);
     const id = 'p_' + socketId;
     const x = 300 + Math.random() * (SW_W - 600);
@@ -260,7 +287,7 @@ class GameRoom {
     for (let i = 0; i < startLen; i++) trail.push({ x, y });
     this.gs.snakes[id] = {
       id, name: p.name, emoji: a.emoji, isNPC: false,
-      bodyColor: a.body, headColor: a.head, animalId: a.id,
+      bodyColor, headColor, animalId: a.id,
       x, y, dir: Math.random() * Math.PI * 2,
       trail, tLen: startLen, growing: 0,
       alive: true, score: 0, kills: 0, maxSize: startLen,
@@ -597,6 +624,7 @@ class GameRoom {
       name: this.name,
       capacity: this.capacity,
       npcFill: this.npcFill,
+      duration: this.duration,
       status: this.status,
       players: Object.values(this.players).map(p => ({
         socketId: p.socketId, name: p.name, emoji: p.emoji,
@@ -651,6 +679,7 @@ class GameRoom {
       capacity: this.capacity,
       playerCount: this.playerCount,
       npcFill: this.npcFill,
+      duration: this.duration,
       status: this.status,
     };
   }

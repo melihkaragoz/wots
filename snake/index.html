@@ -12,6 +12,22 @@
 <div id="rooms-screen" class="screen">
   <div class="screen-inner">
     <h1 class="logo">🐍 Snake Wars</h1>
+
+    <!-- Header bar: auth state -->
+    <div class="rooms-header-bar">
+      <div id="user-info" class="user-info hidden">
+        <span class="gold-badge" id="header-gold">0</span>
+        <span class="user-name-display" id="header-name"></span>
+        <button class="btn-ghost btn-sm" onclick="Auth.openProfile()">Profil</button>
+        <button class="btn-ghost btn-sm" onclick="Auth.openShop()">Mağaza</button>
+        <button class="btn-ghost btn-sm" onclick="Auth.logout()">Çıkış</button>
+      </div>
+      <div id="guest-info" class="guest-info">
+        <button class="btn-primary btn-sm" onclick="Auth.openLoginModal()">Giriş Yap</button>
+        <button class="btn-ghost btn-sm"   onclick="Auth.openRegisterModal()">Kayıt Ol</button>
+      </div>
+    </div>
+
     <div class="rooms-toolbar">
       <button class="btn-primary" onclick="UI.openCreateRoom()">+ Oda Oluştur</button>
       <button class="btn-ghost"   onclick="UI.refreshRooms()">↻ Yenile</button>
@@ -30,6 +46,13 @@
     <input id="room-name" placeholder="Benim Odam" maxlength="40">
     <label>Kapasite (2–15)</label>
     <input id="room-cap" type="number" min="2" max="15" value="8">
+    <label>Maç Süresi</label>
+    <select id="room-duration" class="modal-select">
+      <option value="5">5 Dakika</option>
+      <option value="10" selected>10 Dakika</option>
+      <option value="15">15 Dakika</option>
+      <option value="20">20 Dakika</option>
+    </select>
     <label>Şifre (opsiyonel)</label>
     <input id="room-pw" type="password" placeholder="Boş bırak = açık oda">
     <div class="row-check">
@@ -81,8 +104,17 @@
 
     <div class="lobby-players" id="lobby-players"></div>
 
+    <div class="lobby-chat">
+      <div id="lobby-chat-msgs" class="lobby-chat-msgs"></div>
+      <div class="lobby-chat-input-row">
+        <input id="lobby-chat-input" placeholder="Mesaj yaz…" maxlength="120"
+               onkeydown="if(event.key==='Enter'){sendLobbyChat();event.preventDefault()}">
+        <button class="btn-ghost btn-sm" onclick="sendLobbyChat()">Gönder</button>
+      </div>
+    </div>
+
     <div class="lobby-footer">
-      <p class="lobby-hint" id="lobby-hint">En az 2 kişi hazır olunca oyun başlar.</p>
+      <p class="lobby-hint" id="lobby-hint">Hazır butonuna bas, oyun başlasın!</p>
       <button id="ready-btn" class="btn-primary btn-lg" onclick="UI.toggleReady()" disabled>Hazır</button>
     </div>
   </div>
@@ -99,6 +131,14 @@
 <!-- ── GAME ───────────────────────────────────────────────────────────────── -->
 <div id="game" class="hidden">
   <canvas id="cvs"></canvas>
+  <div id="dead" class="hidden">
+    <div id="dead-box">
+      <div class="dead-icon">💀</div>
+      <h2>Öldün!</h2>
+      <p id="dead-score">Skor: 0</p>
+      <p id="dead-respawn" style="color:#2ed573;font-size:.9rem">Yeniden doğuyorsun…</p>
+    </div>
+  </div>
   <div id="chat-wrap">
     <div id="chat-msgs"></div>
     <div id="chat-input-wrap" class="hidden">
@@ -106,6 +146,7 @@
     </div>
   </div>
   <button id="kb-btn" title="Tuş bağlamaları" onclick="UI.openKeybindings()">⌨️</button>
+  <button id="vol-btn" title="Ses" onclick="toggleVolBtn()">🔊</button>
 </div>
 
 <!-- ── MATCH END ──────────────────────────────────────────────────────────── -->
@@ -134,7 +175,70 @@
   </div>
 </div>
 
+<!-- ── LOGIN MODAL ──────────────────────────────────────────────────────── -->
+<div id="login-modal" class="modal-overlay hidden">
+  <div class="modal">
+    <h2>Giriş Yap</h2>
+    <div id="login-error" class="auth-error hidden"></div>
+    <label>E-posta</label>
+    <input id="auth-email" type="text" placeholder="ornek@mail.com">
+    <label>Şifre</label>
+    <input id="auth-pass" type="password" placeholder="••••••"
+           onkeydown="if(event.key==='Enter')Auth.submitLogin()">
+    <div class="modal-btns">
+      <button class="btn-ghost" onclick="UI.closeModal()">İptal</button>
+      <button class="btn-primary" onclick="Auth.submitLogin()">Giriş Yap</button>
+    </div>
+    <p class="auth-switch">Hesabın yok mu? <a href="#" onclick="Auth.openRegisterModal();return false">Kayıt Ol</a></p>
+  </div>
+</div>
+
+<!-- ── REGISTER MODAL ──────────────────────────────────────────────────── -->
+<div id="register-modal" class="modal-overlay hidden">
+  <div class="modal">
+    <h2>Kayıt Ol</h2>
+    <div id="register-error" class="auth-error hidden"></div>
+    <label>Kullanıcı Adı</label>
+    <input id="reg-username" type="text" placeholder="Adın (2-30 karakter)" maxlength="30">
+    <label>E-posta</label>
+    <input id="reg-email" type="text" placeholder="ornek@mail.com">
+    <label>Şifre</label>
+    <input id="reg-pass" type="password" placeholder="En az 6 karakter"
+           onkeydown="if(event.key==='Enter')Auth.submitRegister()">
+    <div class="modal-btns">
+      <button class="btn-ghost" onclick="UI.closeModal()">İptal</button>
+      <button class="btn-primary" onclick="Auth.submitRegister()">Kayıt Ol</button>
+    </div>
+    <p class="auth-switch">Zaten hesabın var mı? <a href="#" onclick="Auth.openLoginModal();return false">Giriş Yap</a></p>
+  </div>
+</div>
+
+<!-- ── PROFILE MODAL ──────────────────────────────────────────────────── -->
+<div id="profile-modal" class="modal-overlay hidden">
+  <div class="modal modal-wide">
+    <h2>Profil</h2>
+    <div id="profile-content"></div>
+    <div class="modal-btns">
+      <button class="btn-primary" onclick="UI.closeModal()">Kapat</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── SHOP MODAL ──────────────────────────────────────────────────────── -->
+<div id="shop-modal" class="modal-overlay hidden">
+  <div class="modal modal-wide">
+    <div class="shop-header"><h2>Mağaza</h2><span class="gold-badge" id="shop-gold">0</span></div>
+    <div class="shop-tabs" id="shop-tabs"></div>
+    <div id="shop-grid" class="shop-grid"></div>
+    <div class="modal-btns">
+      <button class="btn-primary" onclick="UI.closeModal()">Kapat</button>
+    </div>
+  </div>
+</div>
+
 <script src="/socket.io/socket.io.js"></script>
+<script src="/snake/sounds.js"></script>
+<script src="/snake/auth.js"></script>
 <script src="/snake/game.js"></script>
 </body>
 </html>
