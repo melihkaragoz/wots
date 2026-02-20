@@ -6,7 +6,8 @@
 const SW_W = 5000, SW_H = 5000;
 const SW_FRUITS = 120;
 const SW_MINES  = 35;
-const SW_SAMPLE = 1;
+const SW_SAMPLE = 3;       // send every 3rd trail point (was 1)
+const NET_SEND_EVERY = 2;  // broadcast every 2nd game tick → 15fps network
 
 const SW_ANIMALS = [
   { id: 'snake',  emoji: '🐍', name: 'Yılan',  body: '#2ed573', head: '#1e9e5e' },
@@ -80,9 +81,15 @@ class GameRoom {
     // Mid-match join: spawn player immediately into the running game
     if (this.status === 'playing' && this.gs) {
       this._spawnPlayer(socket.id, this.players[socket.id]);
+      // Send full state snapshot to joining player
+      const initFruits = Object.values(this.gs.fruits).map(f => [f.id, Math.round(f.x), Math.round(f.y), f.color, f.radius, f.soul ? 1 : 0]);
+      const initMines  = Object.values(this.gs.mines).map(m => [m.id, Math.round(m.x), Math.round(m.y)]);
       socket.emit('match_start', {
         duration_sec: this.duration * 60,
         mapW: SW_W, mapH: SW_H,
+        fruits: initFruits,
+        mines:  initMines,
+        meta:   this._snakeMeta,
       });
     }
 
@@ -162,15 +169,30 @@ class GameRoom {
     this.tick     = 0;
     this.timeLeft = this.duration * 60 * 30; // ticks (duration in minutes × 60s × 30fps)
     this.gs = { snakes: {}, fruits: {}, bombs: {}, mines: {}, playerMap: {} };
+    // Delta tracking for fruits & mines
+    this._fruitAdded   = [];
+    this._fruitRemoved = [];
+    this._mineAdded    = [];
+    this._mineRemoved  = [];
+    // Snake metadata sent separately (static info)
+    this._snakeMeta    = {};  // id → {name, emoji, isNPC, bodyColor, headColor}
+    this._metaDirty    = true;
 
     for (let i = 0; i < SW_FRUITS; i++) this._spawnFruit();
     for (let i = 0; i < SW_MINES;  i++) this._spawnMine();
     if (this.npcFill) this._fillNpcs();
     for (const [sid, p] of Object.entries(this.players)) this._spawnPlayer(sid, p);
 
+    // Build initial full fruit/mine snapshot
+    const initFruits = Object.values(this.gs.fruits).map(f => [f.id, Math.round(f.x), Math.round(f.y), f.color, f.radius, f.soul ? 1 : 0]);
+    const initMines  = Object.values(this.gs.mines).map(m => [m.id, Math.round(m.x), Math.round(m.y)]);
+
     this.broadcast('match_start', {
       duration_sec: this.duration * 60,
       mapW: SW_W, mapH: SW_H,
+      fruits: initFruits,
+      mines:  initMines,
+      meta:   this._snakeMeta,
     });
     this.gameLoopId = setInterval(() => this._tickLoop(), 1000 / 30);
   }
@@ -183,7 +205,10 @@ class GameRoom {
 
     // Expire soul orbs
     for (const [fid, f] of Object.entries(this.gs.fruits)) {
-      if (f.soul && --f.timer <= 0) delete this.gs.fruits[fid];
+      if (f.soul && --f.timer <= 0) {
+        delete this.gs.fruits[fid];
+        this._fruitRemoved.push(fid);
+      }
     }
 
     for (const s of Object.values(this.gs.snakes)) {
@@ -208,8 +233,9 @@ class GameRoom {
       if (s.spawnTimer > 0) s.spawnTimer--;
       if (s.isNPC) this._npcAI(s);
 
-      // Boost drain: 1pt per 6 ticks
-      if (s.boosting && this.tick % 6 === 0) {
+      // Boost drain: 1pt per N ticks (default 6, upgradeable)
+      const drainDiv = s.mods?.boost_drain_div || 6;
+      if (s.boosting && this.tick % drainDiv === 0) {
         if (s.tLen <= 15) s.boosting = false;
         else { s.tLen--; if (s.trail.length > s.tLen) s.trail.shift(); }
       }
@@ -223,7 +249,16 @@ class GameRoom {
     this._checkBombs();
     this._checkMines();
 
-    this.broadcast('tick', this._buildState());
+    // Broadcast at reduced rate (15fps instead of 30fps)
+    if (this.tick % NET_SEND_EVERY === 0) {
+      this.broadcast('tick', this._buildState());
+      // Clear delta buffers after send
+      this._fruitAdded.length   = 0;
+      this._fruitRemoved.length = 0;
+      this._mineAdded.length    = 0;
+      this._mineRemoved.length  = 0;
+      this._metaDirty = false;
+    }
   }
 
   // ── Match end ────────────────────────────────────────────────────────────
@@ -292,9 +327,11 @@ class GameRoom {
       trail, tLen: startLen, growing: 0,
       alive: true, score: 0, kills: 0, maxSize: startLen,
       deathTimer: 0, spawnTimer: 90, boosting: false,
-      mods, activeAbilities: p.activeAbilities || {},
+      mods, activeAbilities: mods.activeAbilities || {},
     };
     this.gs.playerMap[socketId] = id;
+    // Mark metadata dirty so next tick sends updated snake info
+    if (this._snakeMeta) { this._snakeMeta[id] = { nm: p.name, em: a.emoji, bc: bodyColor, hc: headColor, npc: 0 }; this._metaDirty = true; }
   }
 
   _respawnPlayer(s) {
@@ -334,6 +371,7 @@ class GameRoom {
       alive: true, score: 0, kills: 0, maxSize: len,
       deathTimer: 0, spawnTimer: 90, npcTimer: 0, boosting: false,
     };
+    if (this._snakeMeta) { this._snakeMeta[id] = { nm, em: a.emoji, bc: a.body, hc: a.head, npc: 1 }; this._metaDirty = true; }
   }
 
   _resetNpc(s) {
@@ -350,11 +388,14 @@ class GameRoom {
       alive: true, score: 0, kills: 0, maxSize: len,
       deathTimer: 0, spawnTimer: 90, npcTimer: 0, boosting: false,
     });
+    if (this._snakeMeta) { this._snakeMeta[s.id] = { nm: s.name, em: a.emoji, bc: a.body, hc: a.head, npc: 1 }; this._metaDirty = true; }
   }
 
   // ── Movement ─────────────────────────────────────────────────────────────
   _moveSnake(s) {
-    const spd = (this.settings.sw_speed || 6) * (s.boosting ? 3 : 1);
+    const boostMult = s.boosting ? (s.mods?.boost_speed_mult || 3) : 1;
+    const dashMult  = s.dashing  ? (s.dashSpeedMult || 2) : 1;
+    const spd = (this.settings.sw_speed || 6) * boostMult * dashMult;
     let nx = s.x + Math.cos(s.dir) * spd;
     let ny = s.y + Math.sin(s.dir) * spd;
     const M = 20;
@@ -433,36 +474,44 @@ class GameRoom {
   _spawnFruit() {
     const id = 'f' + (this.idx++);
     const t  = SW_FRUIT_TYPES[Math.floor(Math.random() * SW_FRUIT_TYPES.length)];
-    this.gs.fruits[id] = { id, x: 60 + Math.random() * (SW_W - 120), y: 60 + Math.random() * (SW_H - 120), ...t };
+    const f = { id, x: 60 + Math.random() * (SW_W - 120), y: 60 + Math.random() * (SW_H - 120), ...t };
+    this.gs.fruits[id] = f;
+    if (this._fruitAdded) this._fruitAdded.push([id, Math.round(f.x), Math.round(f.y), f.color, f.radius, 0]);
   }
 
   _spawnMine() {
     const id = 'm' + (this.idx++);
-    this.gs.mines[id] = { id, x: 150 + Math.random() * (SW_W - 300), y: 150 + Math.random() * (SW_H - 300) };
+    const m = { id, x: 150 + Math.random() * (SW_W - 300), y: 150 + Math.random() * (SW_H - 300) };
+    this.gs.mines[id] = m;
+    if (this._mineAdded) this._mineAdded.push([id, Math.round(m.x), Math.round(m.y)]);
   }
 
   _spawnSoulOrb(s) {
     const id = 'soul' + (this.idx++);
     const r  = Math.max(14, Math.min(30, 14 + s.tLen / 40));
     this.gs.fruits[id] = { id, x: s.x, y: s.y, color: s.headColor, value: 50, radius: r, soul: true, timer: 1200 };
+    if (this._fruitAdded) this._fruitAdded.push([id, Math.round(s.x), Math.round(s.y), s.headColor, r, 1]);
   }
 
   // ── Attract & eat ─────────────────────────────────────────────────────────
   _attractAndEat() {
-    const ATTRACT_RANGE = this.settings.attract_range || 120;
-    const EAT_RANGE     = 28;
+    const BASE_ATTRACT = this.settings.attract_range || 120;
+    const EAT_RANGE    = 28;
     for (const s of Object.values(this.gs.snakes)) {
       if (!s.alive) continue;
+      const ATTRACT_RANGE = s.mods?.attract_range || BASE_ATTRACT;
       for (const [fid, f] of Object.entries(this.gs.fruits)) {
         const dx = s.x - f.x, dy = s.y - f.y;
         const dist = Math.hypot(dx, dy);
         if (dist < EAT_RANGE) {
           s.growing += f.value; s.score += f.value;
+          this._fruitRemoved.push(fid);
           delete this.gs.fruits[fid];
           if (!f.soul) this._spawnFruit();
         } else if (dist < ATTRACT_RANGE) {
           const spd = 3 + 9 * (1 - dist / ATTRACT_RANGE);
           f.x += (dx / dist) * spd; f.y += (dy / dist) * spd;
+          f._moved = true;
         }
       }
     }
@@ -479,10 +528,13 @@ class GameRoom {
         // Head-to-head
         if (Math.hypot(s1.x - s2.x, s1.y - s2.y) < 20) {
           if (s1.tLen > s2.tLen) {
+            if (s2.shielded) { s2.shielded = false; continue; }
             s2.alive = false; this._spawnSoulOrb(s2);
             s1.growing += Math.floor(s2.tLen * 0.13); s1.score += s2.tLen;
             s1.kills = (s1.kills || 0) + 1;
           } else if (s1.tLen === s2.tLen) {
+            if (s1.shielded) { s1.shielded = false; continue; }
+            if (s2.shielded) { s2.shielded = false; continue; }
             s1.alive = false; this._spawnSoulOrb(s1);
             s2.alive = false; this._spawnSoulOrb(s2);
           }
@@ -494,6 +546,7 @@ class GameRoom {
         const tailSkip = Math.min(15, Math.floor(body.length * 0.1));
         for (let k = tailSkip; k < body.length - 12 && s1.alive; k++) {
           if (Math.hypot(s1.x - body[k].x, s1.y - body[k].y) < 14) {
+            if (s1.shielded) { s1.shielded = false; break; }
             s1.alive = false; this._spawnSoulOrb(s1);
             s2.kills = (s2.kills || 0) + 1;
             break;
@@ -513,14 +566,17 @@ class GameRoom {
   }
 
   _checkBombs() {
-    const BOMB_RADIUS = (this.settings.bomb_radius || 375);
-    const BOMB_DAMAGE = (this.settings.bomb_damage || 100);
+    const BASE_RADIUS = (this.settings.bomb_radius || 375);
+    const BASE_DAMAGE = (this.settings.bomb_damage || 100);
     for (const [bid, bomb] of Object.entries(this.gs.bombs)) {
       if (--bomb.timer > 0) continue;
+      const BOMB_RADIUS = BASE_RADIUS + (bomb.radiusBonus || 0);
+      const BOMB_DAMAGE = BASE_DAMAGE + (bomb.damageBonus || 0);
       const hits = [];
       for (const s of Object.values(this.gs.snakes)) {
         if (!s.alive || s.id === bomb.ownerId) continue;
         if (Math.hypot(s.x - bomb.x, s.y - bomb.y) < BOMB_RADIUS) {
+          if (s.shielded) { s.shielded = false; hits.push(s.id); continue; }
           s.tLen -= BOMB_DAMAGE;
           if (s.tLen < 1) { s.alive = false; this._spawnSoulOrb(s); }
           else if (s.trail.length > s.tLen) s.trail = s.trail.slice(s.trail.length - s.tLen);
@@ -565,10 +621,15 @@ class GameRoom {
       const damage    = Math.round(MINE_DAMAGE * (1 - resistPct));
       for (const [mid, mine] of Object.entries(this.gs.mines)) {
         if (Math.hypot(s.x - mine.x, s.y - mine.y) < 23) {
-          s.tLen -= damage;
-          if (s.tLen < 1) { s.alive = false; this._spawnSoulOrb(s); }
-          else if (s.trail.length > s.tLen) s.trail = s.trail.slice(s.trail.length - s.tLen);
+          if (s.shielded) {
+            s.shielded = false;
+          } else {
+            s.tLen -= damage;
+            if (s.tLen < 1) { s.alive = false; this._spawnSoulOrb(s); }
+            else if (s.trail.length > s.tLen) s.trail = s.trail.slice(s.trail.length - s.tLen);
+          }
           this.broadcast('mineHit', { id: mid, x: mine.x, y: mine.y, snakeId: s.id });
+          this._mineRemoved.push(mid);
           delete this.gs.mines[mid];
           this._spawnMine();
           break;
@@ -597,12 +658,23 @@ class GameRoom {
     }
     if (itemType === 'shield') {
       const props = ab.shield;
-      if (!props || props.active) return;
+      if (!props || s.shielded) return;
       const now = Date.now();
       if (props.lastUsed && now - props.lastUsed < props.cooldown_sec * 1000) return;
       props.lastUsed = now;
       s.shielded = true;
       this.broadcast('player_shielded', { id: snakeId });
+    }
+    if (itemType === 'dash') {
+      const props = ab.dash;
+      if (!props || s.dashing) return;
+      const now = Date.now();
+      if (props.lastUsed && now - props.lastUsed < props.cooldown_sec * 1000) return;
+      props.lastUsed = now;
+      s.dashing = true;
+      s.dashSpeedMult = props.speed_mult || 2.0;
+      this.broadcast('player_dashing', { id: snakeId, duration_sec: props.duration_sec });
+      setTimeout(() => { s.dashing = false; s.dashSpeedMult = 1; }, props.duration_sec * 1000);
     }
   }
 
@@ -634,40 +706,55 @@ class GameRoom {
   }
 
   _buildState() {
-    const snakes = Object.values(this.gs.snakes).map(s => {
-      const body = [];
-      for (let i = 0; i < s.trail.length; i += SW_SAMPLE) body.push(s.trail[i]);
+    // Compact snake format: short keys, body as flat [x,y,x,y,...] array
+    const s_arr = Object.values(this.gs.snakes).map(s => {
+      const bp = [];   // flat body points
+      for (let i = 0; i < s.trail.length; i += SW_SAMPLE) {
+        bp.push(Math.round(s.trail[i].x), Math.round(s.trail[i].y));
+      }
       if (s.trail.length) {
         const last = s.trail[s.trail.length - 1];
-        if (!body.length || body[body.length - 1] !== last) body.push(last);
+        const lx = Math.round(last.x), ly = Math.round(last.y);
+        if (bp.length < 2 || bp[bp.length - 2] !== lx || bp[bp.length - 1] !== ly) {
+          bp.push(lx, ly);
+        }
       }
+      // Pack: id, x, y, dir, body, len, alive, score, kills, boosting, shielded, invisible, deathTimer, spawnTimer
       return {
-        id: s.id, name: s.name, emoji: s.emoji,
-        bodyColor: s.invisible ? 'transparent' : s.bodyColor,
-        headColor: s.invisible ? 'transparent' : s.headColor,
-        x: Math.round(s.x), y: Math.round(s.y), dir: s.dir,
-        body: body.map(p => ({ x: Math.round(p.x), y: Math.round(p.y) })),
-        len: s.tLen, alive: s.alive, score: s.score, isNPC: s.isNPC,
-        boosting: s.boosting, shielded: !!s.shielded, invisible: !!s.invisible,
-        deathTimer: s.deathTimer, spawnTimer: s.spawnTimer,
+        i: s.id,
+        x: Math.round(s.x), y: Math.round(s.y), d: +s.dir.toFixed(3),
+        b: bp,
+        l: s.tLen, a: s.alive ? 1 : 0, sc: s.score, k: s.kills || 0,
+        bo: s.boosting ? 1 : 0, sh: s.shielded ? 1 : 0, iv: s.invisible ? 1 : 0,
+        dt: s.deathTimer, st: s.spawnTimer,
       };
     });
 
-    return {
-      snakes,
-      fruits: Object.values(this.gs.fruits).map(f => ({
-        id: f.id, x: Math.round(f.x), y: Math.round(f.y),
-        color: f.color, radius: f.radius, soul: !!f.soul,
-      })),
-      bombs: Object.values(this.gs.bombs).map(b => ({
-        id: b.id, x: Math.round(b.x), y: Math.round(b.y), t: b.timer,
-      })),
-      mines: Object.values(this.gs.mines).map(m => ({
-        id: m.id, x: Math.round(m.x), y: Math.round(m.y),
-      })),
-      timeLeft: Math.ceil(this.timeLeft / 30),
-      mapW: SW_W, mapH: SW_H,
-    };
+    const pkt = { s: s_arr, t: Math.ceil(this.timeLeft / 30) };
+
+    // Delta fruits: only send adds/removes (not full list every tick)
+    if (this._fruitAdded.length)   pkt.fa = this._fruitAdded;    // [[id,x,y,color,radius,soul],...]
+    if (this._fruitRemoved.length) pkt.fr = this._fruitRemoved;  // [id,...]
+
+    // Delta mines: only send adds/removes
+    if (this._mineAdded.length)   pkt.ma = this._mineAdded;      // [[id,x,y],...]
+    if (this._mineRemoved.length) pkt.mr = this._mineRemoved;    // [id,...]
+
+    // Bombs (usually few, send all active)
+    const bombArr = Object.values(this.gs.bombs);
+    if (bombArr.length) pkt.bm = bombArr.map(b => [Math.round(b.x), Math.round(b.y), b.timer]);
+
+    // Fruit positions that moved (attracted towards snake) — send positions for active fruits near snakes
+    const movedFruits = [];
+    for (const f of Object.values(this.gs.fruits)) {
+      if (f._moved) { movedFruits.push([f.id, Math.round(f.x), Math.round(f.y)]); f._moved = false; }
+    }
+    if (movedFruits.length) pkt.fm = movedFruits;
+
+    // Snake metadata (name, emoji, colors) — only sent when changed
+    if (this._metaDirty) pkt.meta = this._snakeMeta;
+
+    return pkt;
   }
 
   // ── Public room info (for listing) ───────────────────────────────────────

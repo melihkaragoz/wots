@@ -34,9 +34,12 @@ const gameEl    = document.getElementById('game');
 // ── State ─────────────────────────────────────────────────────────────────
 let myId         = null;   // 'p_' + socket.id
 let snakes       = [];
-let fruits       = [];
+let fruits       = {};     // id → {id,x,y,color,radius,soul}
+let fruitsArr    = [];     // cached array for render
 let bombs        = [];
-let mines        = [];
+let mines        = {};     // id → {id,x,y}
+let minesArr     = [];     // cached array for render
+let snakeMeta    = {};     // id → {nm,em,bc,hc,npc}
 let cam          = { x: 0, y: 0 };
 let camTarget    = { x: 0, y: 0 };
 let mapW         = 5000, mapH = 5000;
@@ -89,7 +92,8 @@ function showScreen(id) {
 
 // ── Game state reset ───────────────────────────────────────────────────────
 function resetGameState() {
-  snakes = []; fruits = []; bombs = []; mines = [];
+  snakes = []; fruits = {}; fruitsArr = []; bombs = []; mines = {}; minesArr = [];
+  snakeMeta = {};
   timeLeft = 0; matchRunning = false; alive = false;
   predReady = false; boosting = false; spaceHeld = false;
   Object.keys(hitFlashes).forEach(k => delete hitFlashes[k]);
@@ -378,10 +382,26 @@ socket.on('countdown_cancelled', () => {
   showScreen('lobby-screen');
 });
 
-socket.on('match_start', ({ mapW: mW, mapH: mH }) => {
-  mapW = mW || 5000; mapH = mH || 5000;
+socket.on('match_start', (data) => {
+  mapW = data.mapW || 5000; mapH = data.mapH || 5000;
   resetGameState();
   matchRunning = true;
+  // Load initial fruits snapshot [id, x, y, color, radius, soul]
+  if (data.fruits) {
+    for (const f of data.fruits) {
+      fruits[f[0]] = { id: f[0], x: f[1], y: f[2], color: f[3], radius: f[4], soul: !!f[5] };
+    }
+    fruitsArr = Object.values(fruits);
+  }
+  // Load initial mines snapshot [id, x, y]
+  if (data.mines) {
+    for (const m of data.mines) {
+      mines[m[0]] = { id: m[0], x: m[1], y: m[2] };
+    }
+    minesArr = Object.values(mines);
+  }
+  // Load snake metadata
+  if (data.meta) snakeMeta = data.meta;
   const deadEl = document.getElementById('dead');
   if (deadEl) deadEl.classList.add('hidden');
   showScreen('game');
@@ -390,14 +410,71 @@ socket.on('match_start', ({ mapW: mW, mapH: mH }) => {
 
 let lastMyScore = 0;
 let lastMyKills = 0;
-socket.on('tick', (state) => {
-  snakes = state.snakes || snakes;
-  fruits = state.fruits || fruits;
-  bombs  = state.bombs  || bombs;
-  mines  = state.mines  || mines;
-  if (state.mapW) { mapW = state.mapW; mapH = state.mapH; }
-  if (state.timeLeft !== undefined) timeLeft = state.timeLeft;
+socket.on('tick', (pkt) => {
+  // ── Unpack compact snake data ──────────────────────────────────────────
+  if (pkt.s) {
+    snakes = pkt.s.map(c => {
+      const meta = snakeMeta[c.i] || {};
+      // Unpack flat body array [x,y,x,y,...] to [{x,y},...]
+      const body = [];
+      for (let j = 0; j < c.b.length; j += 2) body.push({ x: c.b[j], y: c.b[j + 1] });
+      return {
+        id: c.i,
+        name: meta.nm || '?', emoji: meta.em || '🐍', isNPC: !!meta.npc,
+        bodyColor: c.iv ? 'transparent' : (meta.bc || '#2ed573'),
+        headColor: c.iv ? 'transparent' : (meta.hc || '#1e9e5e'),
+        x: c.x, y: c.y, dir: c.d, body,
+        len: c.l, alive: !!c.a, score: c.sc, kills: c.k,
+        boosting: !!c.bo, shielded: !!c.sh, invisible: !!c.iv,
+        deathTimer: c.dt, spawnTimer: c.st,
+      };
+    });
+  }
 
+  // ── Delta fruit updates ────────────────────────────────────────────────
+  let fruitsChanged = false;
+  if (pkt.fa) {  // fruit added: [id, x, y, color, radius, soul]
+    for (const f of pkt.fa) {
+      fruits[f[0]] = { id: f[0], x: f[1], y: f[2], color: f[3], radius: f[4], soul: !!f[5] };
+    }
+    fruitsChanged = true;
+  }
+  if (pkt.fr) {  // fruit removed: [id, ...]
+    for (const id of pkt.fr) delete fruits[id];
+    fruitsChanged = true;
+  }
+  if (pkt.fm) {  // fruit moved: [id, x, y]
+    for (const f of pkt.fm) {
+      if (fruits[f[0]]) { fruits[f[0]].x = f[1]; fruits[f[0]].y = f[2]; }
+    }
+    // No need to rebuild array for position updates
+  }
+  if (fruitsChanged) fruitsArr = Object.values(fruits);
+
+  // ── Delta mine updates ─────────────────────────────────────────────────
+  let minesChanged = false;
+  if (pkt.ma) {  // mine added: [id, x, y]
+    for (const m of pkt.ma) {
+      mines[m[0]] = { id: m[0], x: m[1], y: m[2] };
+    }
+    minesChanged = true;
+  }
+  if (pkt.mr) {  // mine removed: [id, ...]
+    for (const id of pkt.mr) delete mines[id];
+    minesChanged = true;
+  }
+  if (minesChanged) minesArr = Object.values(mines);
+
+  // ── Bombs (compact) ────────────────────────────────────────────────────
+  bombs = (pkt.bm || []).map(b => ({ x: b[0], y: b[1], t: b[2] }));
+
+  // ── Snake metadata update ──────────────────────────────────────────────
+  if (pkt.meta) Object.assign(snakeMeta, pkt.meta);
+
+  // ── Time ───────────────────────────────────────────────────────────────
+  if (pkt.t !== undefined) timeLeft = pkt.t;
+
+  // ── Local player SFX / overlay ─────────────────────────────────────────
   const me = snakes.find(s => s.id === myId);
   if (me) {
     if (!predReady) { predX = me.x; predY = me.y; predReady = true; }
@@ -405,19 +482,16 @@ socket.on('tick', (state) => {
       predX += (me.x - predX) * 0.25;
       predY += (me.y - predY) * 0.25;
     }
-    // Detect score increase → fruit eat sound
     if (me.score > lastMyScore && lastMyScore > 0) {
       if (me.score - lastMyScore >= 5) SFX.eatSoul();
       else SFX.eatFruit();
     }
-    // Detect kill
     if ((me.kills || 0) > lastMyKills && lastMyKills > 0) SFX.kill();
     lastMyScore = me.score;
     lastMyKills = me.kills || 0;
 
     const wasAlive = alive;
     alive = me.alive;
-    // Death / respawn overlay + sounds
     const deadEl = document.getElementById('dead');
     if (wasAlive && !alive && deadEl) {
       SFX.death();
@@ -431,10 +505,10 @@ socket.on('tick', (state) => {
 });
 
 socket.on('mineHit', ({ id, x, y, snakeId }) => {
-  mines = mines.filter(m => m.id !== id);
+  delete mines[id];
+  minesArr = Object.values(mines);
   bombBlasts.push({ wx: x, wy: y, timer: 30, maxTimer: 30, radius: 120 });
   hitFlashes[snakeId] = 25;
-  // Only play impact SFX if local player was hit
   if (snakeId === myId) SFX.mineHit();
 });
 
@@ -498,6 +572,11 @@ socket.on('player_invisible', ({ id }) => {
 socket.on('player_shielded', ({ id }) => {
   const s = snakes.find(x => x.id === id);
   if (s) s.shielded = true;
+});
+
+socket.on('player_dashing', ({ id }) => {
+  const s = snakes.find(x => x.id === id);
+  if (s) s.dashing = true;
 });
 
 socket.on('chatMsg', ({ name, emoji, msg }) => {
@@ -796,7 +875,7 @@ function render() {
 
   // ── Fruits ──────────────────────────────────────────────────────────────
   const now = Date.now();
-  for (const f of fruits) {
+  for (const f of fruitsArr) {
     const sx = f.x - cam.x, sy = f.y - cam.y;
     if (sx < -80 || sx > W + 80 || sy < -80 || sy > H + 80) continue;
 
@@ -890,7 +969,7 @@ function render() {
   }
 
   // ── Mines ───────────────────────────────────────────────────────────────
-  for (const m of mines) {
+  for (const m of minesArr) {
     const sx = m.x - cam.x, sy = m.y - cam.y;
     if (sx < -60 || sx > W + 60 || sy < -60 || sy > H + 60) continue;
     const pulse = 1 + 0.08 * Math.sin(now / 700 + m.x * 0.02);
@@ -1070,10 +1149,10 @@ function drawMinimap(W, H) {
 
   const scX = MM_W / mapW, scY = MM_H / mapH;
   ctx.fillStyle = 'rgba(255,255,255,0.1)';
-  for (const f of fruits) {
+  for (const f of fruitsArr) {
     ctx.beginPath(); ctx.arc(MX + f.x * scX, MY + f.y * scY, 1.5, 0, Math.PI * 2); ctx.fill();
   }
-  for (const m of mines) {
+  for (const m of minesArr) {
     ctx.beginPath(); ctx.arc(MX + m.x * scX, MY + m.y * scY, 2.5, 0, Math.PI * 2);
     ctx.fillStyle = '#cc2222'; ctx.fill();
   }
