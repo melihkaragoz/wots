@@ -393,6 +393,7 @@ class GameRoom {
 
   // ── Movement ─────────────────────────────────────────────────────────────
   _moveSnake(s) {
+    s.prevX = s.x; s.prevY = s.y;
     const boostMult = s.boosting ? (s.mods?.boost_speed_mult || 3) : 1;
     const dashMult  = s.dashing  ? (s.dashSpeedMult || 2) : 1;
     const spd = (this.settings.sw_speed || 6) * boostMult * dashMult;
@@ -488,8 +489,13 @@ class GameRoom {
 
   _spawnSoulOrb(s) {
     const id = 'soul' + (this.idx++);
-    const r  = Math.max(14, Math.min(30, 14 + s.tLen / 40));
-    this.gs.fruits[id] = { id, x: s.x, y: s.y, color: s.headColor, value: 50, radius: r, soul: true, timer: 1200 };
+    // Value scales with player's score — min 30 (encourages kills), max 120
+    // Score penalty on death: 35% lost → prevents farming the same player
+    const score = s.score || 0;
+    const value = score < 250 ? 30 : Math.min(120, 30 + Math.floor((score - 250) * 0.12));
+    const r = Math.max(14, Math.min(34, 14 + value / 6));
+    s.score = Math.floor(score * 0.65);  // 35% score penalty on death
+    this.gs.fruits[id] = { id, x: s.x, y: s.y, color: s.headColor, value, radius: r, soul: true, timer: 1200 };
     if (this._fruitAdded) this._fruitAdded.push([id, Math.round(s.x), Math.round(s.y), s.headColor, r, 1]);
   }
 
@@ -518,15 +524,45 @@ class GameRoom {
   }
 
   // ── Collision ─────────────────────────────────────────────────────────────
+  // Swept collision: check intermediate points along movement path so
+  // fast-moving snakes (boost/dash) can't phase through each other.
   _collide() {
     const alive = Object.values(this.gs.snakes).filter(s => s.alive);
+    const HEAD_HEAD_R = 22;
+    const HEAD_BODY_R = 16;
+
     for (const s1 of alive) {
-      if (s1.spawnTimer > 0) continue;
+      if (s1.spawnTimer > 0 || !s1.alive) continue;
+
+      // Build swept sample points along s1's movement this tick
+      const px = s1.prevX ?? s1.x, py = s1.prevY ?? s1.y;
+      const moveDist = Math.hypot(s1.x - px, s1.y - py);
+      const steps = Math.max(1, Math.ceil(moveDist / HEAD_BODY_R));
+      const pts = [];
+      for (let i = 0; i <= steps; i++) {
+        const t = i / steps;
+        pts.push({ x: px + (s1.x - px) * t, y: py + (s1.y - py) * t });
+      }
+
       for (const s2 of alive) {
         if (s1 === s2 || !s1.alive || !s2.alive) continue;
 
-        // Head-to-head
-        if (Math.hypot(s1.x - s2.x, s1.y - s2.y) < 20) {
+        // Head-to-head: also sweep s2's path
+        const px2 = s2.prevX ?? s2.x, py2 = s2.prevY ?? s2.y;
+        const moveDist2 = Math.hypot(s2.x - px2, s2.y - py2);
+        const steps2 = Math.max(1, Math.ceil(moveDist2 / HEAD_HEAD_R));
+        let headHit = false;
+        for (let i = 0; i <= steps && !headHit; i++) {
+          const t1 = i / steps;
+          const hx1 = px + (s1.x - px) * t1, hy1 = py + (s1.y - py) * t1;
+          for (let j = 0; j <= steps2 && !headHit; j++) {
+            const t2 = j / steps2;
+            const hx2 = px2 + (s2.x - px2) * t2, hy2 = py2 + (s2.y - py2) * t2;
+            if (Math.hypot(hx1 - hx2, hy1 - hy2) < HEAD_HEAD_R) headHit = true;
+          }
+        }
+
+        if (headHit) {
           if (s1.tLen > s2.tLen) {
             if (s2.shielded) { s2.shielded = false; continue; }
             s2.alive = false; this._spawnSoulOrb(s2);
@@ -541,16 +577,23 @@ class GameRoom {
           continue;
         }
 
-        // Head → body
+        // Head → body (swept): check every sample point against s2's body
         const body = s2.trail;
-        const tailSkip = Math.min(15, Math.floor(body.length * 0.1));
-        for (let k = tailSkip; k < body.length - 12 && s1.alive; k++) {
-          if (Math.hypot(s1.x - body[k].x, s1.y - body[k].y) < 14) {
-            if (s1.shielded) { s1.shielded = false; break; }
-            s1.alive = false; this._spawnSoulOrb(s1);
-            s2.kills = (s2.kills || 0) + 1;
-            break;
+        const tailSkip = Math.min(12, Math.floor(body.length * 0.08));
+        const headZone = 10; // skip points very close to s2's head
+        let bodyHit = false;
+        for (const p of pts) {
+          if (bodyHit || !s1.alive) break;
+          for (let k = tailSkip; k < body.length - headZone; k++) {
+            if (Math.hypot(p.x - body[k].x, p.y - body[k].y) < HEAD_BODY_R) {
+              bodyHit = true; break;
+            }
           }
+        }
+        if (bodyHit) {
+          if (s1.shielded) { s1.shielded = false; continue; }
+          s1.alive = false; this._spawnSoulOrb(s1);
+          s2.kills = (s2.kills || 0) + 1;
         }
       }
     }

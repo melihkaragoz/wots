@@ -94,8 +94,10 @@ const SFX = (() => {
   }
 
   function death() {
-    sweep('sawtooth', 400, 80, 0.6, 0.3);
-    setTimeout(() => noise(0.3, 0.15), 100);
+    // Soft descending tone — gentle sine sweep + quiet triangle undertone
+    sweep('sine', 440, 140, 0.45, 0.2);
+    setTimeout(() => osc('triangle', 180, 0.3, 0.08), 80);
+    setTimeout(() => osc('sine', 120, 0.25, 0.06), 200);
   }
 
   function kill() {

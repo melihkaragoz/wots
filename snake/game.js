@@ -64,6 +64,22 @@ let spaceHeld = false, spaceStartTime = 0;
 // Effects
 const hitFlashes = {};
 const bombBlasts = [];
+const particles  = [];   // High-quality particle system
+const floatingTexts = []; // +score popups
+
+// ── Graphics Quality ─────────────────────────────────────────────────────
+const GFX = {
+  HIGH: 'high', LOW: 'low',
+  level: localStorage.getItem('snakeGfx') || 'high',
+  set(lv) { this.level = lv; localStorage.setItem('snakeGfx', lv); },
+  toggle() { this.set(this.level === 'high' ? 'low' : 'high'); return this.level; },
+  get hi() { return this.level === 'high'; },
+};
+
+// ── Tick interpolation state ─────────────────────────────────────────────
+let prevSnakes   = {};    // id → {x, y, dir, body:[{x,y},...]}
+let lastTickTime = 0;
+const TICK_INTERVAL = 1000 / 15;  // server sends 15fps
 
 // ── Nick / animal persisted in localStorage ────────────────────────────────
 let lobbyNick          = localStorage.getItem('snakeNick')   || '';
@@ -93,7 +109,7 @@ function showScreen(id) {
 // ── Game state reset ───────────────────────────────────────────────────────
 function resetGameState() {
   snakes = []; fruits = {}; fruitsArr = []; bombs = []; mines = {}; minesArr = [];
-  snakeMeta = {};
+  snakeMeta = {}; prevSnakes = {}; lastTickTime = 0; particles.length = 0; floatingTexts.length = 0;
   timeLeft = 0; matchRunning = false; alive = false;
   predReady = false; boosting = false; spaceHeld = false;
   Object.keys(hitFlashes).forEach(k => delete hitFlashes[k]);
@@ -411,6 +427,15 @@ socket.on('match_start', (data) => {
 let lastMyScore = 0;
 let lastMyKills = 0;
 socket.on('tick', (pkt) => {
+  // ── Save previous positions for interpolation ──────────────────────────
+  if (GFX.hi) {
+    prevSnakes = {};
+    for (const s of snakes) {
+      prevSnakes[s.id] = { x: s.x, y: s.y, dir: s.dir, body: s.body };
+    }
+    lastTickTime = performance.now();
+  }
+
   // ── Unpack compact snake data ──────────────────────────────────────────
   if (pkt.s) {
     snakes = pkt.s.map(c => {
@@ -483,10 +508,28 @@ socket.on('tick', (pkt) => {
       predY += (me.y - predY) * 0.25;
     }
     if (me.score > lastMyScore && lastMyScore > 0) {
-      if (me.score - lastMyScore >= 5) SFX.eatSoul();
+      const gained = me.score - lastMyScore;
+      if (gained >= 5) SFX.eatSoul();
       else SFX.eatFruit();
+      // Floating score popup
+      floatingTexts.push({
+        x: me.x, y: me.y - 20,
+        text: `+${gained}`,
+        color: gained >= 30 ? '#ffd700' : gained >= 5 ? '#a29bfe' : '#2ed573',
+        life: 60, maxLife: 60,
+      });
     }
-    if ((me.kills || 0) > lastMyKills && lastMyKills > 0) SFX.kill();
+    if ((me.kills || 0) > lastMyKills && lastMyKills > 0) {
+      SFX.kill();
+      // Kill particles on victims (high only)
+      if (GFX.hi) {
+        for (const s of snakes) {
+          if (s.id !== myId && !s.alive && prevSnakes[s.id]) {
+            spawnBurst(s.x, s.y, s.headColor || '#ff4444', 20);
+          }
+        }
+      }
+    }
     lastMyScore = me.score;
     lastMyKills = me.kills || 0;
 
@@ -497,9 +540,13 @@ socket.on('tick', (pkt) => {
       SFX.death();
       document.getElementById('dead-score').textContent = `Skor: ${me.score || 0}`;
       deadEl.classList.remove('hidden');
+      // Death particles (high only)
+      if (GFX.hi) spawnBurst(me.x, me.y, me.headColor || '#ff4444', 25);
     } else if (!wasAlive && alive && deadEl) {
       SFX.respawn();
       deadEl.classList.add('hidden');
+      // Respawn particles
+      if (GFX.hi) spawnBurst(me.x, me.y, '#2ed573', 15);
     }
   }
 });
@@ -809,6 +856,18 @@ function toggleVolBtn() {
   if (btn) btn.textContent = muted ? '🔇' : '🔊';
 }
 
+// ── GFX quality toggle ───────────────────────────────────────────────────
+function toggleGfxBtn() {
+  const lv = GFX.toggle();
+  const btn = document.getElementById('gfx-btn');
+  if (btn) btn.textContent = lv === 'high' ? 'HD' : 'SD';
+}
+// Init button label
+requestAnimationFrame(() => {
+  const btn = document.getElementById('gfx-btn');
+  if (btn) btn.textContent = GFX.hi ? 'HD' : 'SD';
+});
+
 // ── Helpers ───────────────────────────────────────────────────────────────
 function roundRect(x, y, w, h, r) {
   ctx.beginPath();
@@ -882,7 +941,8 @@ function render() {
     if (f.soul) {
       const pulse = 1 + 0.22 * Math.sin(now / 280 + f.x * 0.005);
       const r = f.radius * pulse;
-      for (let gi = 3; gi >= 1; gi--) {
+      const glowLayers = GFX.hi ? 3 : 1;
+      for (let gi = glowLayers; gi >= 1; gi--) {
         const gr = ctx.createRadialGradient(sx, sy, 0, sx, sy, r * gi * 1.4);
         gr.addColorStop(0, f.color + (gi === 1 ? '55' : gi === 2 ? '33' : '18'));
         gr.addColorStop(1, 'transparent');
@@ -907,6 +967,13 @@ function render() {
     } else {
       const pulse = 1 + 0.12 * Math.sin(now / 400 + f.x);
       const r = f.radius * pulse;
+      if (GFX.hi) {
+        // Extra outer glow ring
+        const g2 = ctx.createRadialGradient(sx, sy, 0, sx, sy, r * 3.5);
+        g2.addColorStop(0, f.color + '22'); g2.addColorStop(1, 'transparent');
+        ctx.fillStyle = g2;
+        ctx.beginPath(); ctx.arc(sx, sy, r * 3.5, 0, Math.PI * 2); ctx.fill();
+      }
       const g = ctx.createRadialGradient(sx, sy, 0, sx, sy, r * 2.5);
       g.addColorStop(0, f.color + '44'); g.addColorStop(1, 'transparent');
       ctx.fillStyle = g;
@@ -914,6 +981,11 @@ function render() {
       ctx.beginPath(); ctx.arc(sx, sy, r, 0, Math.PI * 2);
       ctx.fillStyle = f.color; ctx.fill();
       ctx.strokeStyle = 'rgba(255,255,255,0.3)'; ctx.lineWidth = 1.5; ctx.stroke();
+      if (GFX.hi) {
+        // Inner highlight
+        ctx.beginPath(); ctx.arc(sx - r * 0.2, sy - r * 0.2, r * 0.4, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(255,255,255,0.2)'; ctx.fill();
+      }
     }
   }
 
@@ -993,9 +1065,49 @@ function render() {
     ctx.fillText('💀', sx, sy);
   }
 
+  // ── Particles (High quality) ────────────────────────────────────────────
+  if (GFX.hi) {
+    for (let i = particles.length - 1; i >= 0; i--) {
+      const p = particles[i];
+      p.x += p.vx; p.y += p.vy; p.life--;
+      if (p.life <= 0) { particles.splice(i, 1); continue; }
+      const a = p.life / p.maxLife;
+      const sx = p.x - cam.x, sy = p.y - cam.y;
+      if (sx < -20 || sx > W + 20 || sy < -20 || sy > H + 20) continue;
+      ctx.globalAlpha = a * 0.7;
+      ctx.fillStyle = p.color;
+      ctx.beginPath(); ctx.arc(sx, sy, p.size * a, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+  }
+
   // ── Snakes ──────────────────────────────────────────────────────────────
+  // Compute interpolation factor for smooth movement between server ticks
+  const tickT = GFX.hi && lastTickTime > 0
+    ? Math.min(1, (performance.now() - lastTickTime) / TICK_INTERVAL)
+    : 1;
   const sorted = [...snakes].sort((a, b) => (+a.alive) - (+b.alive));
-  for (const s of sorted) drawSnake(s);
+  for (const s of sorted) drawSnake(s, tickT);
+
+  // ── Floating score texts ────────────────────────────────────────────────
+  for (let i = floatingTexts.length - 1; i >= 0; i--) {
+    const ft = floatingTexts[i];
+    ft.life--;
+    ft.y -= 0.8;  // float upward
+    if (ft.life <= 0) { floatingTexts.splice(i, 1); continue; }
+    const alpha = ft.life / ft.maxLife;
+    const sx = ft.x - cam.x, sy = ft.y - cam.y;
+    if (sx < -100 || sx > W + 100 || sy < -50 || sy > H + 50) continue;
+    const size = ft.life > ft.maxLife * 0.7 ? 18 + (1 - ft.life / ft.maxLife) * 20 : 16;
+    ctx.font = `bold ${Math.round(size)}px Arial`;
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillStyle = `rgba(0,0,0,${alpha * 0.5})`;
+    ctx.fillText(ft.text, sx + 1, sy + 1);
+    ctx.fillStyle = ft.color;
+    ctx.globalAlpha = alpha;
+    ctx.fillText(ft.text, sx, sy);
+    ctx.globalAlpha = 1;
+  }
 
   // ── Slingshot rubber band ────────────────────────────────────────────────
   if (spaceHeld && alive && predReady) {
@@ -1039,18 +1151,57 @@ function render() {
   }
 }
 
-function drawSnake(s) {
+function lerpVal(a, b, t) { return a + (b - a) * t; }
+
+function spawnBurst(wx, wy, color, count) {
+  for (let i = 0; i < count; i++) {
+    const angle = Math.random() * Math.PI * 2;
+    const speed = 1 + Math.random() * 4;
+    particles.push({
+      x: wx, y: wy,
+      vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed,
+      life: 25 + Math.random() * 20, maxLife: 45,
+      color, size: 2 + Math.random() * 3,
+    });
+  }
+}
+
+function drawSnake(s, tickT) {
   const body = s.body;
   if (!body || body.length < 2) return;
   const W = canvas.width, H = canvas.height;
   const isMe  = s.id === myId;
   const flash = hitFlashes[s.id] > 0;
   const bodyR = Math.max(6, Math.min(22, 6 + s.len / 40));
-  const hx = s.x - cam.x, hy = s.y - cam.y;
+  const hi    = GFX.hi;
+
+  // ── Interpolation: lerp between prev tick and current tick positions ──
+  const prev = prevSnakes[s.id];
+  let hx, hy, drawDir, drawBody;
+  if (hi && prev && tickT < 1 && !isMe) {
+    // Interpolate head position
+    hx = lerpVal(prev.x, s.x, tickT) - cam.x;
+    hy = lerpVal(prev.y, s.y, tickT) - cam.y;
+    drawDir = prev.dir + ((((s.dir - prev.dir) % (Math.PI * 2)) + Math.PI * 3) % (Math.PI * 2) - Math.PI) * tickT;
+    // Interpolate body points
+    const minLen = Math.min(prev.body.length, body.length);
+    drawBody = [];
+    for (let i = 0; i < body.length; i++) {
+      if (i < minLen) {
+        drawBody.push({ x: lerpVal(prev.body[i].x, body[i].x, tickT), y: lerpVal(prev.body[i].y, body[i].y, tickT) });
+      } else {
+        drawBody.push(body[i]);
+      }
+    }
+  } else {
+    hx = s.x - cam.x; hy = s.y - cam.y;
+    drawDir = s.dir;
+    drawBody = body;
+  }
 
   // Bounding-box cull
   let bMinX = Infinity, bMaxX = -Infinity, bMinY = Infinity, bMaxY = -Infinity;
-  for (const p of body) {
+  for (const p of drawBody) {
     const px = p.x - cam.x, py = p.y - cam.y;
     if (px < bMinX) bMinX = px; if (px > bMaxX) bMaxX = px;
     if (py < bMinY) bMinY = py; if (py > bMaxY) bMaxY = py;
@@ -1075,57 +1226,102 @@ function drawSnake(s) {
     ctx.beginPath(); ctx.arc(hx, hy, bodyR * 3.5, 0, Math.PI * 2); ctx.fill();
   }
 
-  // Body
-  ctx.beginPath();
-  ctx.moveTo(body[0].x - cam.x, body[0].y - cam.y);
-  for (let i = 1; i < body.length; i++) ctx.lineTo(body[i].x - cam.x, body[i].y - cam.y);
-  ctx.strokeStyle = flash ? '#ffffff' : s.bodyColor;
-  ctx.lineWidth = bodyR * 2; ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.stroke();
+  // ── Body rendering ────────────────────────────────────────────────────
+  if (hi && drawBody.length >= 3) {
+    // High quality: smooth bezier curves through body points
+    ctx.beginPath();
+    ctx.moveTo(drawBody[0].x - cam.x, drawBody[0].y - cam.y);
+    for (let i = 1; i < drawBody.length - 1; i++) {
+      const cx = (drawBody[i].x + drawBody[i + 1].x) / 2 - cam.x;
+      const cy = (drawBody[i].y + drawBody[i + 1].y) / 2 - cam.y;
+      ctx.quadraticCurveTo(drawBody[i].x - cam.x, drawBody[i].y - cam.y, cx, cy);
+    }
+    const last = drawBody[drawBody.length - 1];
+    ctx.lineTo(last.x - cam.x, last.y - cam.y);
+    // Body outline for depth (high only)
+    ctx.strokeStyle = flash ? '#ffffff' : s.bodyColor;
+    ctx.lineWidth = bodyR * 2 + 2; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    ctx.save();
+    ctx.globalAlpha = (s.alive ? 1 : 0.2) * 0.3;
+    ctx.strokeStyle = '#000';
+    ctx.stroke();
+    ctx.restore();
+    // Main body
+    ctx.strokeStyle = flash ? '#ffffff' : s.bodyColor;
+    ctx.lineWidth = bodyR * 2; ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.stroke();
+  } else {
+    // Low quality: straight lines
+    ctx.beginPath();
+    ctx.moveTo(drawBody[0].x - cam.x, drawBody[0].y - cam.y);
+    for (let i = 1; i < drawBody.length; i++) ctx.lineTo(drawBody[i].x - cam.x, drawBody[i].y - cam.y);
+    ctx.strokeStyle = flash ? '#ffffff' : s.bodyColor;
+    ctx.lineWidth = bodyR * 2; ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.stroke();
+  }
 
-  // Boost speed lines
+  // ── Boost speed lines ─────────────────────────────────────────────────
   if (s.boosting) {
-    const behind = s.dir + Math.PI;
-    for (let i = 0; i < 5; i++) {
-      const lineDir = behind + (i - 2) * 0.28;
-      const len = (25 + Math.random() * 30) * (isMe ? 1 : 0.7);
+    const behind = drawDir + Math.PI;
+    const lineCount = hi ? 8 : 5;
+    for (let i = 0; i < lineCount; i++) {
+      const t = i / (lineCount - 1) - 0.5;
+      const lineDir = behind + t * 0.7;
+      const len = (25 + Math.random() * 30) * (isMe ? 1 : 0.7) * (hi ? 1.3 : 1);
       const lx = hx + Math.cos(lineDir) * (bodyR + 4);
       const ly = hy + Math.sin(lineDir) * (bodyR + 4);
       ctx.beginPath(); ctx.moveTo(lx, ly);
       ctx.lineTo(lx + Math.cos(lineDir) * len, ly + Math.sin(lineDir) * len);
-      ctx.strokeStyle = `rgba(255,220,80,${0.6 - Math.abs(i - 2) * 0.15})`;
-      ctx.lineWidth = 2 - Math.abs(i - 2) * 0.4; ctx.lineCap = 'round'; ctx.stroke();
+      ctx.strokeStyle = `rgba(255,220,80,${0.6 - Math.abs(t) * 0.8})`;
+      ctx.lineWidth = 2.5 - Math.abs(t) * 2; ctx.lineCap = 'round'; ctx.stroke();
+    }
+    // Spawn boost particles (high only)
+    if (hi && Math.random() < 0.5) {
+      particles.push({
+        x: s.x + (Math.random() - 0.5) * bodyR * 2,
+        y: s.y + (Math.random() - 0.5) * bodyR * 2,
+        vx: Math.cos(behind) * (1 + Math.random() * 2),
+        vy: Math.sin(behind) * (1 + Math.random() * 2),
+        life: 20 + Math.random() * 15, maxLife: 35,
+        color: '#ffd700', size: 2 + Math.random() * 2,
+      });
     }
   }
 
-  // Head glow (player only)
-  if (isMe) {
+  // ── Head glow ─────────────────────────────────────────────────────────
+  if (isMe || hi) {
     const glowColor = s.boosting ? '#ffdd44' : s.headColor;
-    const glow = ctx.createRadialGradient(hx, hy, 0, hx, hy, bodyR * (s.boosting ? 4 : 2.8));
-    glow.addColorStop(0, glowColor + '66'); glow.addColorStop(1, 'transparent');
+    const glowR = bodyR * (s.boosting ? 4 : (isMe ? 2.8 : 1.8));
+    const glow = ctx.createRadialGradient(hx, hy, 0, hx, hy, glowR);
+    glow.addColorStop(0, glowColor + (isMe ? '66' : '33'));
+    glow.addColorStop(1, 'transparent');
     ctx.fillStyle = glow;
-    ctx.beginPath(); ctx.arc(hx, hy, bodyR * (s.boosting ? 4 : 2.8), 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(hx, hy, glowR, 0, Math.PI * 2); ctx.fill();
   }
 
-  // Head circle
+  // ── Head circle ───────────────────────────────────────────────────────
   const hR = bodyR + 4;
+  if (hi) {
+    // Outer shadow ring
+    ctx.beginPath(); ctx.arc(hx, hy, hR + 1.5, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(0,0,0,0.25)'; ctx.fill();
+  }
   ctx.beginPath(); ctx.arc(hx, hy, hR, 0, Math.PI * 2);
   ctx.fillStyle = flash ? '#ffffff' : s.headColor; ctx.fill();
   ctx.strokeStyle = isMe ? 'rgba(255,255,255,0.9)' : 'rgba(255,255,255,0.35)';
   ctx.lineWidth = isMe ? 2.5 : 1.5; ctx.stroke();
 
-  // Eyes
+  // ── Eyes ───────────────────────────────────────────────────────────────
   const eOff = hR * 0.55;
   for (const side of [-1, 1]) {
-    const ex = hx + Math.cos(s.dir + side * 0.52) * eOff;
-    const ey = hy + Math.sin(s.dir + side * 0.52) * eOff;
+    const ex = hx + Math.cos(drawDir + side * 0.52) * eOff;
+    const ey = hy + Math.sin(drawDir + side * 0.52) * eOff;
     const eR = hR * 0.3;
     ctx.beginPath(); ctx.arc(ex, ey, eR, 0, Math.PI * 2); ctx.fillStyle = '#fff'; ctx.fill();
     ctx.beginPath(); ctx.arc(
-      ex + Math.cos(s.dir) * eR * 0.5, ey + Math.sin(s.dir) * eR * 0.5, eR * 0.55, 0, Math.PI * 2);
+      ex + Math.cos(drawDir) * eR * 0.5, ey + Math.sin(drawDir) * eR * 0.5, eR * 0.55, 0, Math.PI * 2);
     ctx.fillStyle = '#111'; ctx.fill();
   }
 
-  // Name tag
+  // ── Name tag ──────────────────────────────────────────────────────────
   if (hx > -150 && hx < W + 150 && hy > -80 && hy < H + 80) {
     const fontSize = Math.max(11, Math.min(15, 11 + s.len / 60));
     ctx.font = `bold ${fontSize}px Arial`;
@@ -1134,6 +1330,12 @@ function drawSnake(s) {
     const tagY = hy - hR - 4;
     ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.fillText(label, hx + 1, tagY + 1);
     ctx.fillStyle = isMe ? '#ffd700' : '#fff'; ctx.fillText(label, hx, tagY);
+    // Score under name (high only)
+    if (hi && s.alive) {
+      ctx.font = '9px Arial'; ctx.textBaseline = 'top';
+      ctx.fillStyle = 'rgba(255,255,255,0.35)';
+      ctx.fillText(`${s.score}`, hx, hy + hR + 4);
+    }
   }
 
   ctx.restore();
