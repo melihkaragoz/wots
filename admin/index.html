@@ -132,10 +132,16 @@ label{font-size:.8rem;color:#888;display:block;margin-bottom:4px;margin-top:10px
 
 <!-- USERS -->
 <div id="page-users" class="page">
-  <h2>Kullanıcılar (son 100)</h2>
+  <h2>Kullanıcılar</h2>
+  <div id="msg-users" class="msg"></div>
+  <div class="card" style="margin-bottom:12px">
+    <input id="user-search" placeholder="Kullanıcı adı veya e-posta ara..." onkeydown="if(event.key==='Enter')searchUsers()" style="width:300px;display:inline-block">
+    <button class="btn btn-primary" style="margin-left:8px" onclick="searchUsers()">Ara</button>
+    <button class="btn-sm" style="margin-left:8px" onclick="document.getElementById('user-search').value='';searchUsers()">Temizle</button>
+  </div>
   <div class="card" style="overflow-x:auto">
     <table id="users-table">
-      <thead><tr><th>Kullanıcı Adı</th><th>E-posta</th><th>Altın</th><th>Oyun</th><th>Kill</th><th>Max Boy</th><th>Kayıt</th></tr></thead>
+      <thead><tr><th>Kullanıcı Adı</th><th>E-posta</th><th>Altın</th><th>Oyun</th><th>Kill</th><th>Max Boy</th><th>Kayıt</th><th>İşlemler</th></tr></thead>
       <tbody></tbody>
     </table>
   </div>
@@ -267,16 +273,45 @@ async function addRewardRule() {
 }
 
 // ── Users ─────────────────────────────────────────────────────────────────
-async function loadUsers() {
-  const rows = await api('/admin/api/users');
+function searchUsers() { loadUsers(document.getElementById('user-search').value.trim()); }
+
+async function loadUsers(q) {
+  const url = q ? '/admin/api/users?q=' + encodeURIComponent(q) : '/admin/api/users';
+  const rows = await api(url);
   const tbody = document.querySelector('#users-table tbody');
-  tbody.innerHTML = rows.map(r => `
+  tbody.innerHTML = rows.map(r => {
+    const safeUser = r.username.replace(/'/g, "\\'").replace(/"/g, '&quot;');
+    return `
     <tr>
       <td>${r.username}</td><td>${r.email}</td>
       <td>🪙 ${r.gold}</td>
       <td>${r.games_played ?? 0}</td><td>${r.total_kills ?? 0}</td><td>${r.max_size ?? 0}</td>
       <td style="font-size:.75rem;color:#666">${new Date(r.created_at).toLocaleDateString('tr')}</td>
-    </tr>`).join('');
+      <td style="white-space:nowrap">
+        <button class="btn-sm" onclick="resetPassword('${r.id}','${safeUser}')">Şifre Sıfırla</button>
+        <button class="btn-sm btn-success" onclick="addGold('${r.id}','${safeUser}')">Bakiye Yükle</button>
+      </td>
+    </tr>`;
+  }).join('');
+}
+
+async function resetPassword(userId, username) {
+  const pw = prompt('Yeni şifre girin (' + username + '):');
+  if (!pw) return;
+  const res = await api('/admin/api/users/' + userId + '/reset-password', { method:'POST', body: JSON.stringify({ password: pw }) });
+  if (res.error) return msg('users', res.error, 'err');
+  msg('users', username + ' şifresi sıfırlandı', 'ok');
+}
+
+async function addGold(userId, username) {
+  const val = prompt('Yüklenecek altın miktarı (' + username + '):\n(Negatif değer düşürür)');
+  if (val == null || val === '') return;
+  const amount = Number(val);
+  if (isNaN(amount)) return msg('users', 'Geçersiz miktar', 'err');
+  const res = await api('/admin/api/users/' + userId + '/add-gold', { method:'POST', body: JSON.stringify({ amount }) });
+  if (res.error) return msg('users', res.error, 'err');
+  msg('users', username + ' bakiyesine ' + amount + ' altın eklendi', 'ok');
+  loadUsers(document.getElementById('user-search').value.trim());
 }
 
 // Init

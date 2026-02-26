@@ -1,6 +1,7 @@
 'use strict';
 const express = require('express');
 const path = require('path');
+const bcrypt = require('bcrypt');
 const db = require('../db');
 
 const router = express.Router();
@@ -79,13 +80,37 @@ router.patch('/api/shop/:id/toggle', async (req, res) => {
 
 // GET /admin/api/users
 router.get('/api/users', async (req, res) => {
-  const { rows } = await db.query(
-    `SELECT u.id, u.username, u.email, u.gold, u.created_at,
+  const search = (req.query.q || '').trim();
+  let query = `SELECT u.id, u.username, u.email, u.gold, u.created_at,
             s.total_kills, s.games_played, s.max_size
-     FROM users u LEFT JOIN user_stats s ON s.user_id = u.id
-     ORDER BY u.created_at DESC LIMIT 100`
-  );
+     FROM users u LEFT JOIN user_stats s ON s.user_id = u.id`;
+  const params = [];
+  if (search) {
+    query += ` WHERE u.username ILIKE $1 OR u.email ILIKE $1`;
+    params.push(`%${search}%`);
+  }
+  query += ` ORDER BY u.created_at DESC LIMIT 200`;
+  const { rows } = await db.query(query, params);
   res.json(rows);
+});
+
+// POST /admin/api/users/:id/reset-password
+router.post('/api/users/:id/reset-password', async (req, res) => {
+  const { password } = req.body || {};
+  if (!password || password.length < 4) return res.status(400).json({ error: 'Şifre en az 4 karakter olmalı' });
+  const hash = await bcrypt.hash(password, 12);
+  const { rowCount } = await db.query('UPDATE users SET password_hash = $1 WHERE id = $2', [hash, req.params.id]);
+  if (!rowCount) return res.status(404).json({ error: 'Kullanıcı bulunamadı' });
+  res.json({ ok: true });
+});
+
+// POST /admin/api/users/:id/add-gold
+router.post('/api/users/:id/add-gold', async (req, res) => {
+  const { amount } = req.body || {};
+  if (amount == null || isNaN(amount)) return res.status(400).json({ error: 'Geçerli bir miktar girin' });
+  const { rowCount } = await db.query('UPDATE users SET gold = gold + $1 WHERE id = $2', [Number(amount), req.params.id]);
+  if (!rowCount) return res.status(404).json({ error: 'Kullanıcı bulunamadı' });
+  res.json({ ok: true });
 });
 
 // GET /admin/api/reward-rules

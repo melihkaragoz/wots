@@ -229,8 +229,8 @@ function initLobby(roomState) {
   lobbyReady = false;
   const btn = document.getElementById('ready-btn');
   if (btn) { btn.textContent = 'Hazır'; btn.classList.remove('btn-ready-active'); }
-  // Pre-fill nick from auth username if available and no saved nick
-  if (Auth.isLoggedIn() && !lobbyNick) {
+  // Always use auth username when logged in
+  if (Auth.isLoggedIn()) {
     lobbyNick = Auth.getUsername();
     localStorage.setItem('snakeNick', lobbyNick);
   }

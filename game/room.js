@@ -234,7 +234,7 @@ class GameRoom {
       if (s.isNPC) this._npcAI(s);
 
       // Boost drain: 1pt per N ticks (default 6, upgradeable)
-      const drainDiv = s.mods?.boost_drain_div || 6;
+      const drainDiv = s.mods?.boost_drain_div || (this.settings.boost_drain_div || 10);
       if (s.boosting && this.tick % drainDiv === 0) {
         if (s.tLen <= 15) s.boosting = false;
         else { s.tLen--; if (s.trail.length > s.tLen) s.trail.shift(); }
@@ -492,7 +492,7 @@ class GameRoom {
     // Value scales with player's score — min 30 (encourages kills), max 120
     // Score penalty on death: 35% lost → prevents farming the same player
     const score = s.score || 0;
-    const value = score < 250 ? 30 : Math.min(120, 30 + Math.floor((score - 250) * 0.12));
+    const value = score < 250 ? 60 : Math.min(120, 60 + Math.floor((score - 250) * 0.08));
     const r = Math.max(14, Math.min(34, 14 + value / 6));
     s.score = Math.floor(score * 0.65);  // 35% score penalty on death
     this.gs.fruits[id] = { id, x: s.x, y: s.y, color: s.headColor, value, radius: r, soul: true, timer: 1200 };

@@ -43,6 +43,7 @@ let gameSettings = {
   attract_range:            120,
   npc_respawn_delay_ticks:  90,
   respawn_delay_ticks:      90,
+  boost_drain_div:          10,
 };
 
 async function refreshSettings() {
@@ -53,6 +54,20 @@ async function refreshSettings() {
   } catch (e) { console.warn('Settings refresh failed:', e.message); }
 }
 setInterval(refreshSettings, 30_000);
+
+// Seed default settings into DB (insert only if missing)
+async function seedDefaults() {
+  const defaults = { ...gameSettings };
+  for (const [key, value] of Object.entries(defaults)) {
+    await db.query(
+      `INSERT INTO app_settings (key, value, updated_at)
+       VALUES ($1, $2::jsonb, NOW())
+       ON CONFLICT (key) DO NOTHING`,
+      [key, JSON.stringify({ value })]
+    );
+  }
+}
+seedDefaults().then(() => refreshSettings()).catch(e => console.warn('Seed failed:', e.message));
 
 // ── Socket.io — Snake Wars namespace ──────────────────────────────────────
 // Defined here so GameRoom receives the correct namespace for broadcasts
@@ -164,8 +179,9 @@ swIo.on('connection', (socket) => {
         } catch {}
       }
       const emojiMap = { snake:'🐍', fox:'🦊', dragon:'🐉', lion:'🦁', wolf:'🐺', bear:'🐻' };
+      const displayName = socket.user?.username || name || 'Oyuncu';
       room.addPlayer(socket, {
-        name: (name || 'Oyuncu').slice(0, 16),
+        name: displayName.slice(0, 16),
         animal: a,
         emoji: emojiMap[a] || '🐍',
         userId: socket.user?.userId || null,
