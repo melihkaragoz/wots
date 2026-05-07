@@ -1,9 +1,7 @@
 services:
   app:
     build: .
-    container_name: snake-wars
-    ports:
-      - "8099:8099"
+    container_name: territory-war-app
     environment:
       - PORT=8099
       - NODE_ENV=production
@@ -15,6 +13,9 @@ services:
       postgres:
         condition: service_healthy
     restart: unless-stopped
+    networks:
+      - default
+      - proxy-network
 
   postgres:
     image: postgres:16-alpine
@@ -33,6 +34,12 @@ services:
       timeout: 5s
       retries: 10
     restart: unless-stopped
+    networks:
+      - default
 
 volumes:
   postgres_data:
+
+networks:
+  proxy-network:
+    external: true

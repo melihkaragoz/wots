@@ -1,7 +1,8 @@
 'use strict';
 
 // ── Constants ──────────────────────────────────────────────────────────────
-const MM_W = 180, MM_H = 120;
+const isMobile = /Mobi|Android|iPad|iPhone|iPod/i.test(navigator.userAgent) || (window.matchMedia && matchMedia('(pointer:coarse)').matches);
+const MM_W = isMobile ? 120 : 180, MM_H = isMobile ? 80 : 120;
 const LERP_CAM  = 0.14;
 const LOCAL_SPD = 6;     // must match server SW_SPEED
 const CAM_LEAD  = 60;
@@ -713,7 +714,13 @@ document.addEventListener('mousemove', e => {
   mouseY = e.clientY - canvas.height / 2;
 });
 
+function _isMobBtn(e) {
+  const el = e.target;
+  return el && (el.classList.contains('mob-btn') || el.closest('#mobile-controls'));
+}
+
 document.addEventListener('touchmove', e => {
+  if (_isMobBtn(e)) return;       // don't steer toward button area
   e.preventDefault();
   const t = e.touches[0];
   mouseClientX = t.clientX; mouseClientY = t.clientY;
@@ -722,6 +729,7 @@ document.addEventListener('touchmove', e => {
 }, { passive: false });
 
 document.addEventListener('touchstart', e => {
+  if (_isMobBtn(e)) return;       // don't steer toward button area
   const t = e.touches[0];
   mouseClientX = t.clientX; mouseClientY = t.clientY;
   mouseX = t.clientX - canvas.width  / 2;
@@ -780,6 +788,67 @@ document.addEventListener('keyup', e => {
     }
   }
 });
+
+// ── Mobile touch buttons ─────────────────────────────────────────────────
+const mobBoostBtn = document.getElementById('mob-boost');
+const mobBombBtn  = document.getElementById('mob-bomb');
+
+if (mobBoostBtn) {
+  mobBoostBtn.addEventListener('touchstart', e => {
+    e.preventDefault();
+    if (!matchRunning || !alive) return;
+    boosting = true;
+    mobBoostBtn.classList.add('active');
+    SFX.boostOn();
+    socket.emit('boost', { on: true });
+  }, { passive: false });
+  mobBoostBtn.addEventListener('touchend', e => {
+    e.preventDefault();
+    if (!boosting) return;
+    boosting = false;
+    mobBoostBtn.classList.remove('active');
+    SFX.boostOff();
+    socket.emit('boost', { on: false });
+  }, { passive: false });
+  mobBoostBtn.addEventListener('touchcancel', () => {
+    if (!boosting) return;
+    boosting = false;
+    mobBoostBtn.classList.remove('active');
+    socket.emit('boost', { on: false });
+  });
+}
+
+if (mobBombBtn) {
+  let mobBombStart = 0;
+  mobBombBtn.addEventListener('touchstart', e => {
+    e.preventDefault();
+    if (!matchRunning || !alive || spaceHeld) return;
+    spaceHeld = true;
+    mobBombStart = Date.now();
+    spaceStartTime = mobBombStart;
+    mobBombBtn.classList.add('active');
+  }, { passive: false });
+  mobBombBtn.addEventListener('touchend', e => {
+    e.preventDefault();
+    if (!spaceHeld) return;
+    spaceHeld = false;
+    mobBombBtn.classList.remove('active');
+    if (!alive || !matchRunning) return;
+    const charge = Math.min(1, (Date.now() - mobBombStart) / 2000);
+    if (charge > 0.05) {
+      SFX.bombThrow();
+      const snakeSX = predX - cam.x, snakeSY = predY - cam.y;
+      socket.emit('throwBomb', {
+        dir:   Math.atan2(mouseClientY - snakeSY, mouseClientX - snakeSX),
+        power: charge,
+      });
+    }
+  }, { passive: false });
+  mobBombBtn.addEventListener('touchcancel', () => {
+    spaceHeld = false;
+    mobBombBtn.classList.remove('active');
+  });
+}
 
 // Direction sending
 let lastDirSent = 0;
@@ -1379,81 +1448,93 @@ function drawMinimap(W, H) {
 
 function drawHUD(W, H) {
   const me = snakes.find(s => s.id === myId);
+  const mob = isMobile;
+  const fs = mob ? 11 : 15;   // base font size
+  const pad = mob ? 8 : 14;   // edge padding
 
   // Match timer — top centre
   if (matchRunning && timeLeft > 0) {
     const urgent = timeLeft <= 30;
-    ctx.font = `bold ${urgent ? 22 : 18}px Arial`;
+    ctx.font = `bold ${urgent ? (mob ? 16 : 22) : (mob ? 14 : 18)}px Arial`;
     ctx.textAlign = 'center'; ctx.textBaseline = 'top';
     ctx.fillStyle = urgent ? '#ff4444' : 'rgba(255,255,255,0.9)';
-    ctx.fillText(`⏱ ${formatTime(timeLeft)}`, W / 2, 12);
+    ctx.fillText(`⏱ ${formatTime(timeLeft)}`, W / 2, 8);
   }
 
   // Player info — top left
   let topTxt = me
-    ? `${me.emoji} ${me.name}  |  Skor: ${me.score}  |  Boy: ${me.len}`
+    ? (mob
+      ? `${me.emoji} S:${me.score} B:${me.len}`
+      : `${me.emoji} ${me.name}  |  Skor: ${me.score}  |  Boy: ${me.len}`)
     : 'Bağlanılıyor…';
-  if (me && Auth.isLoggedIn()) {
+  if (!mob && me && Auth.isLoggedIn()) {
     const gold = document.getElementById('header-gold')?.textContent || '0';
     topTxt += `  |  💰 ${gold}`;
   }
   ctx.fillStyle = 'rgba(255,255,255,0.88)';
-  ctx.font = 'bold 15px Arial'; ctx.textAlign = 'left'; ctx.textBaseline = 'top';
-  ctx.fillText(topTxt, 14, 14);
+  ctx.font = `bold ${fs}px Arial`; ctx.textAlign = 'left'; ctx.textBaseline = 'top';
+  ctx.fillText(topTxt, pad, pad);
 
-  const bombKey  = codeToDisplay(kb.bomb);
-  const canBomb  = me && me.alive && me.len >= 45;
-  const bombTxt  = canBomb
-    ? `💣 [${bombKey}] Bomba at (−40 boy)`
-    : me && me.len < 45
-      ? `💣 Bomba için ${45 - me.len} daha gerek`
-      : '';
-  if (bombTxt) {
-    ctx.font = '12px Arial';
-    ctx.fillStyle = canBomb ? '#ffcc44' : 'rgba(255,255,255,0.35)';
-    ctx.fillText(bombTxt, 14, 34);
-  }
-
-  ctx.font = '11px Arial';
-  ctx.fillStyle = me && me.boosting ? '#ffdd44' : 'rgba(255,255,255,0.3)';
-  ctx.fillText(me && me.boosting ? '🚀 BOOST aktif — boy eriyor!' : '🖱️ [Sol Tık] Boost (boy harcar)', 14, 54);
-
-  let hintY = 70;
-  if (me && me.alive) {
-    const abilities = [
-      { code: kb.invisibility, icon: '👻', name: 'Görünmezlik' },
-      { code: kb.shield,       icon: '🛡️', name: 'Kalkan' },
-      { code: kb.dash,         icon: '💨', name: 'Dash' },
-    ];
-    ctx.fillStyle = 'rgba(180,180,255,0.35)';
-    for (const ab of abilities) {
-      ctx.fillText(`${ab.icon} [${codeToDisplay(ab.code)}] ${ab.name}`, 14, hintY);
-      hintY += 16;
+  // Desktop-only keyboard hints
+  if (!mob) {
+    const bombKey  = codeToDisplay(kb.bomb);
+    const canBomb  = me && me.alive && me.len >= 45;
+    const bombTxt  = canBomb
+      ? `💣 [${bombKey}] Bomba at (−40 boy)`
+      : me && me.len < 45
+        ? `💣 Bomba için ${45 - me.len} daha gerek`
+        : '';
+    if (bombTxt) {
+      ctx.font = '12px Arial';
+      ctx.fillStyle = canBomb ? '#ffcc44' : 'rgba(255,255,255,0.35)';
+      ctx.fillText(bombTxt, 14, 34);
     }
-  }
-  ctx.fillStyle = 'rgba(180,180,255,0.35)';
-  ctx.fillText(`💬 [${codeToDisplay(kb.chat)}] Sohbet`, 14, hintY);
 
-  // Leaderboard — top right
-  const aliveSnakes = [...snakes].filter(s => s.alive).sort((a, b) => b.len - a.len).slice(0, 6);
-  const lbW = 200, lbH = 22 + aliveSnakes.length * 22 + 6;
-  const lbX = W - lbW - 14, lbY = 14;
+    ctx.font = '11px Arial';
+    ctx.fillStyle = me && me.boosting ? '#ffdd44' : 'rgba(255,255,255,0.3)';
+    ctx.fillText(me && me.boosting ? '🚀 BOOST aktif — boy eriyor!' : '🖱️ [Sol Tık] Boost (boy harcar)', 14, 54);
+
+    let hintY = 70;
+    if (me && me.alive) {
+      const abilities = [
+        { code: kb.invisibility, icon: '👻', name: 'Görünmezlik' },
+        { code: kb.shield,       icon: '🛡️', name: 'Kalkan' },
+        { code: kb.dash,         icon: '💨', name: 'Dash' },
+      ];
+      ctx.fillStyle = 'rgba(180,180,255,0.35)';
+      for (const ab of abilities) {
+        ctx.fillText(`${ab.icon} [${codeToDisplay(ab.code)}] ${ab.name}`, 14, hintY);
+        hintY += 16;
+      }
+    }
+    ctx.fillStyle = 'rgba(180,180,255,0.35)';
+    ctx.fillText(`💬 [${codeToDisplay(kb.chat)}] Sohbet`, 14, hintY);
+  }
+
+  // Leaderboard — top right (smaller on mobile)
+  const maxLb = mob ? 4 : 6;
+  const aliveSnakes = [...snakes].filter(s => s.alive).sort((a, b) => b.len - a.len).slice(0, maxLb);
+  const lbW = mob ? 130 : 200;
+  const lbRowH = mob ? 18 : 22;
+  const lbH = lbRowH + aliveSnakes.length * lbRowH + 6;
+  const lbX = W - lbW - pad, lbY = pad;
   ctx.fillStyle = 'rgba(4,4,20,0.72)';
   roundRect(lbX, lbY, lbW, lbH, 8); ctx.fill();
   ctx.fillStyle = 'rgba(255,255,255,0.45)';
-  ctx.font = 'bold 10px Arial'; ctx.textAlign = 'center'; ctx.textBaseline = 'top';
-  ctx.fillText('🏆 LİDERLER', lbX + lbW / 2, lbY + 5);
+  ctx.font = `bold ${mob ? 8 : 10}px Arial`; ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+  ctx.fillText('🏆 LİDERLER', lbX + lbW / 2, lbY + 4);
   for (let i = 0; i < aliveSnakes.length; i++) {
     const s    = aliveSnakes[i];
     const isMe = s.id === myId;
-    const y    = lbY + 22 + i * 22;
-    ctx.font      = isMe ? 'bold 12px Arial' : '11px Arial';
+    const y    = lbY + lbRowH + i * lbRowH;
+    ctx.font      = isMe ? `bold ${mob ? 10 : 12}px Arial` : `${mob ? 9 : 11}px Arial`;
     ctx.fillStyle = isMe ? '#ffd700' : 'rgba(255,255,255,0.8)';
     ctx.textAlign = 'left';
-    ctx.fillText(`${i + 1}. ${s.emoji} ${s.name}${s.isNPC ? ' 🤖' : ''}`, lbX + 10, y);
+    const name = mob ? s.name.slice(0, 8) : `${s.name}${s.isNPC ? ' 🤖' : ''}`;
+    ctx.fillText(`${i + 1}. ${s.emoji} ${name}`, lbX + 6, y);
     ctx.textAlign = 'right';
     ctx.fillStyle = isMe ? '#ffd700' : 'rgba(255,255,255,0.5)';
-    ctx.fillText(`${s.len}`, lbX + lbW - 8, y);
+    ctx.fillText(`${s.len}`, lbX + lbW - 6, y);
   }
 }
 

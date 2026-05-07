@@ -640,3 +640,94 @@ body {
 .room-status-finished {
   background: rgba(162,155,254,.15); color: #a29bfe;
 }
+
+/* ── Mobile touch controls ─────────────────────────────────────────── */
+#mobile-controls { display: none; }
+
+@media (max-width: 768px), (pointer: coarse) {
+  #mobile-controls {
+    display: flex;
+    position: fixed;
+    bottom: 24px;
+    right: 16px;
+    gap: 14px;
+    z-index: 16;
+    pointer-events: auto;
+  }
+  .mob-btn {
+    width: 68px; height: 68px;
+    border-radius: 50%;
+    border: 2px solid rgba(255,255,255,.2);
+    font-size: 1.6rem;
+    display: flex; align-items: center; justify-content: center;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+    user-select: none;
+    touch-action: none;
+    transition: transform .1s, border-color .1s;
+  }
+  .mob-boost {
+    background: rgba(46,213,115,.2);
+  }
+  .mob-boost.active {
+    background: rgba(46,213,115,.5);
+    border-color: #2ed573;
+    transform: scale(1.1);
+  }
+  .mob-bomb {
+    background: rgba(255,71,87,.2);
+  }
+  .mob-bomb.active {
+    background: rgba(255,71,87,.5);
+    border-color: #ff4757;
+    transform: scale(1.1);
+  }
+  /* Hide keyboard/keybind button on mobile */
+  #kb-btn { display: none; }
+
+  /* ── Responsive: screens ─────────────────────────────────────────── */
+  .screen-inner { width: min(400px, 96vw); padding: 18px 12px; }
+  .modal { padding: 18px 16px; width: min(360px, 94vw); }
+  .modal-wide { width: min(400px, 96vw); }
+
+  /* Lobby */
+  .hero-cards, #hero-grid { grid-template-columns: repeat(3, 1fr); gap: 5px; }
+  .hero-card { padding: 8px 4px 6px; font-size: .75rem; }
+  .he { font-size: 1.6rem; }
+  .nick-input { padding: 8px 10px; font-size: .9rem; }
+  .lobby-chat-msgs { max-height: 80px; }
+
+  /* Match end leaderboard */
+  .leaderboard { gap: 4px; }
+  .lb-row { padding: 7px 10px; gap: 8px; }
+  .lb-rank { font-size: 1rem; width: 22px; }
+  .lb-name { font-size: .8rem; }
+  .lb-score { font-size: .8rem; }
+
+  /* Shop grid */
+  .shop-grid { grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 6px; }
+  .shop-card { padding: 8px; }
+  .shop-card-name { font-size: .78rem; }
+  .shop-card-desc { font-size: .65rem; }
+
+  /* Rooms list */
+  .room-card { padding: 10px 12px; gap: 8px; }
+  .room-card .room-name { font-size: .88rem; }
+  .room-card .room-info { font-size: .7rem; }
+
+  /* Dead overlay */
+  #dead-box { padding: 24px 20px; }
+  #dead-box h2 { font-size: 1.4rem; }
+  #dead-box p { font-size: .85rem; }
+
+  /* Chat smaller */
+  #chat-wrap { width: 200px; right: 10px; bottom: 100px; }
+
+  /* Profile stats */
+  .profile-stats { grid-template-columns: repeat(2, 1fr); }
+
+  /* Top bar buttons */
+  #vol-btn, #gfx-btn { font-size: .75rem; padding: 4px 7px; }
+  #vol-btn { right: 12px; }
+  #gfx-btn { right: 48px; }
+}
